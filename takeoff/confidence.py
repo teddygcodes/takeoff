@@ -91,14 +91,17 @@ def calculate_confidence(
     covered_normalized = {_normalize_area_label(a) for a in areas_covered}
 
     if rcp_snippet_areas:
+        # Exclude areas whose label normalizes to empty (e.g. revision-only strings like "(Copy)").
+        # They must be excluded from both numerator AND denominator — keeping them in the
+        # denominator would deflate the percentage for no valid reason.
+        valid_areas = [a for a in rcp_snippet_areas if _normalize_area_label(a)]
         matched_count = 0
-        for raw_label in rcp_snippet_areas:
+        for raw_label in valid_areas:
             norm = _normalize_area_label(raw_label)
-            if not norm:
-                continue  # skip labels that normalize to empty (e.g. revision-only strings)
             if norm in covered_normalized or _area_fuzzy_match(norm, covered_normalized):
                 matched_count += 1
-        features["area_coverage"] = matched_count / len(rcp_snippet_areas)
+        features["area_coverage"] = (matched_count / len(valid_areas)
+                                     if valid_areas else 0.5)
     else:
         # No named RCP areas to verify against — neutral score (0.5), not perfect credit.
         # This is distinct from partial coverage: 0 labeled areas means the check is

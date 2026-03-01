@@ -153,6 +153,7 @@ def _normalize_area_label(label: str) -> str:
     """
     label = unicodedata.normalize("NFC", label)
     label = label.strip().lower().replace("-", " ").replace("_", " ")
+    label = re.sub(r"\s+", " ", label)  # collapse consecutive spaces from multi-dash/underscore
     # Only strip known revision/copy suffixes, not meaningful location parentheticals.
     # Patterns: (copy), (rev A), (rev. 2), (revision 1), (v2), (1), (2) — pure numeric
     label = re.sub(

@@ -130,7 +130,7 @@ class LLMProvider:
         Returns:
             LLMResponse with the completion
         """
-        model = model or API_CONFIG.get("model", "claude-sonnet-4-20250514")
+        model = model or API_CONFIG.get("model", "claude-sonnet-4-6")
 
         # Check cache
         if self.cache_enabled:

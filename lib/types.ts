@@ -39,7 +39,7 @@ export interface FixtureRow {
 }
 
 export interface AdversarialEntry {
-  attack_id: string;
+  attack_id?: string;
   severity: "critical" | "major" | "minor";
   category: string;
   description: string;

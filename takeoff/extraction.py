@@ -492,8 +492,10 @@ Return ONLY valid JSON:
 
         bad_vals = {k: v for k, v in area_count.counts_by_type.items() if not isinstance(v, (int, float))}
         if bad_vals:
-            logger.warning("[EXTRACTION] RCP '%s': non-numeric counts_by_type values ignored: %s", area_label, bad_vals)
-        total = sum(v for v in area_count.counts_by_type.values() if isinstance(v, (int, float)))
+            logger.warning("[EXTRACTION] RCP '%s': non-numeric counts_by_type values removed: %s", area_label, bad_vals)
+            for k in bad_vals:
+                del area_count.counts_by_type[k]
+        total = sum(area_count.counts_by_type.values())
         logger.info("[EXTRACTION] RCP '%s': %d fixtures across %d types", area_label, total, len(area_count.counts_by_type))
         return area_count
 
