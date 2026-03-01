@@ -1,5 +1,9 @@
 """Takeoff Constitution: Hard Rules and Articles for Adversarial Lighting Takeoff."""
 
+import re
+import unicodedata
+from difflib import SequenceMatcher
+
 
 # 6 Hard Rules (Judge enforces these strictly)
 HARD_RULES = [
@@ -147,8 +151,6 @@ def _normalize_area_label(label: str) -> str:
     so that 'Floor 2 North (Copy)' matches 'Floor 2 North'.
     Does NOT strip meaningful parentheticals like '(North)' or '(East Wing)'.
     """
-    import re
-    import unicodedata
     label = unicodedata.normalize("NFC", label)
     label = label.strip().lower().replace("-", " ").replace("_", " ")
     # Only strip known revision/copy suffixes, not meaningful location parentheticals.
@@ -179,9 +181,6 @@ def _area_fuzzy_match(expected: str, covered_set: set) -> bool:
     tokens in the expected label must appear in the candidate (prevents "Level 1"
     from matching "Level 2"). Falls back to difflib ratio ≥0.80 for short labels.
     """
-    import re
-    from difflib import SequenceMatcher
-
     exp_nums = set(re.findall(r'\d+', expected))
     exp_words = {w for w in expected.split() if w not in _AREA_STOPWORDS and len(w) > 1}
 
@@ -337,8 +336,7 @@ def check_emergency_fixtures(fixture_counts: list) -> list:
         tag = count.get("type_tag", "").lower()
         notes = count.get("notes", "").lower()
 
-        import re as _re
-        if any(_re.search(r'\b' + _re.escape(kw) + r'\b', desc + " " + tag + " " + notes, _re.IGNORECASE)
+        if any(re.search(r'\b' + re.escape(kw) + r'\b', desc + " " + tag + " " + notes, re.IGNORECASE)
                for kw in EMERGENCY_KEYWORDS):
             has_emergency_tracking = True
             break

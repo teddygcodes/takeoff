@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { TakeoffResult } from "@/lib/types";
 
 export type { TakeoffResult as TakeoffResultData };
@@ -87,11 +87,19 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
   const [activeTab, setActiveTab] = useState<"counts" | "adversarial" | "confidence" | "export">("counts");
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current !== null) clearTimeout(copyTimeoutRef.current);
+    };
+  }, []);
 
   const handleCopy = useCallback(() => {
     copyTable(data);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (copyTimeoutRef.current !== null) clearTimeout(copyTimeoutRef.current);
+    copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
   }, [data]);
 
   if (data.error) {

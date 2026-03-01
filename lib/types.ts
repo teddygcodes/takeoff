@@ -19,14 +19,6 @@ export interface Snippet {
 
 export type TakeoffMode = "fast" | "strict" | "liability";
 
-export type AppState =
-  | "empty"
-  | "loaded"
-  | "snipping"
-  | "ready"
-  | "running"
-  | "complete";
-
 export interface ReadinessStatus {
   ready: boolean;
   message: string;
@@ -91,11 +83,6 @@ export interface TakeoffResult {
   constitutional_violations: Violation[];
   flags?: string[];
   ruling_summary?: string;
-}
-
-export interface MockPage {
-  number: number;
-  title: string;
 }
 
 export interface PipelineStep {

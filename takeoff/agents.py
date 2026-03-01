@@ -236,7 +236,7 @@ class Checker:
             # Heuristic: small round thousands likely entered as watts instead of VA —
             # surface this in the prompt so the LLM can issue a cross_reference attack.
             unit_warning = ""
-            if panel_data.total_load_va % 1000 == 0 and panel_data.total_load_va < 5000:
+            if panel_data.total_load_va % 1000 == 0 and panel_data.total_load_va < 2000:
                 unit_warning = f" UNIT CONCERN: {panel_data.total_load_va} is a small round multiple of 1000 — value may be in watts or kVA rather than VA. Flag this as a cross_reference attack."
             panel_text = f"Panel total load: {panel_data.total_load_va} VA.{unit_warning} Estimated Counter wattage: {estimated_va}W. Discrepancy: {abs(panel_data.total_load_va - estimated_va)} VA."
 
@@ -637,7 +637,7 @@ Address each attack and provide revised counts. For each plan note constraint, e
                 rc = resp.get("revised_count")
                 if rc is not None:
                     try:
-                        rc_int = int(rc)
+                        rc_int = round(float(rc))
                         if rc_int < 0 or rc_int > _MAX_COUNT:
                             logger.warning(
                                 "[RECONCILER] Clamping revised_count %d to [0, %d] for attack %s",

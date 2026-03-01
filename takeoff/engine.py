@@ -11,7 +11,7 @@ import json
 import logging
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from typing import Optional, List, Dict
 
 logger = logging.getLogger(__name__)
@@ -177,9 +177,12 @@ class TakeoffEngine:
         if fs_images:
             with ThreadPoolExecutor(max_workers=min(len(fs_images), 6)) as _ex:
                 fs_futures = {_ex.submit(extract_fixture_schedule, img): s for s, img in fs_images}
-                for fut in as_completed(fs_futures):
+                for fut in as_completed(fs_futures, timeout=200):
                     try:
                         extracted = fut.result()
+                    except FuturesTimeoutError:
+                        emit("WARNING: Fixture schedule extraction timed out for one snippet")
+                        continue
                     except Exception as _e:
                         emit(f"WARNING: Fixture schedule extraction failed for one snippet: {_e}")
                         continue
@@ -262,10 +265,12 @@ class TakeoffEngine:
                         idx_futures[_ex.submit(extract_plan_notes, img)] = i
                     else:
                         idx_futures[_ex.submit(extract_panel_schedule, img)] = i
-                for fut in as_completed(idx_futures):
+                for fut in as_completed(idx_futures, timeout=200):
                     idx = idx_futures[fut]
                     try:
                         _results[idx] = fut.result()
+                    except FuturesTimeoutError:
+                        emit("WARNING: Parallel extraction timed out for one snippet")
                     except Exception as _e:
                         emit(f"WARNING: Parallel extraction failed for one snippet: {_e}")
                         # _results[idx] stays None — downstream code handles None gracefully
