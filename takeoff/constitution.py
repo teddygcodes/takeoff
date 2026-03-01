@@ -423,11 +423,16 @@ def check_non_negative_counts(fixture_counts: list) -> list:
                 "explanation": f"Type '{tag}' has a negative total count ({total}). Counts must be ≥ 0."
             })
         for area, count in fc.get("counts_by_area", {}).items():
-            if not isinstance(count, int):
+            _not_valid_count = (
+                isinstance(count, bool)                              # True/False are bool subclasses of int — not counts
+                or not isinstance(count, (int, float))              # strings, None, dicts, etc.
+                or (isinstance(count, float) and count % 1 != 0)    # fractional floats like 5.7
+            )
+            if _not_valid_count:
                 violations.append({
                     "rule": "Non-Negative Counts",
                     "severity": "MAJOR",
-                    "explanation": f"Type '{tag}' area '{area}' has a non-integer count ({count}). Fixture counts must be whole numbers."
+                    "explanation": f"Type '{tag}' area '{area}' has a non-integer count ({count!r}). Fixture counts must be whole numbers."
                 })
             elif isinstance(count, (int, float)) and count < 0:
                 violations.append({

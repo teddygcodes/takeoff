@@ -151,35 +151,29 @@ export default function TakeoffPage() {
   );
 
   return (
-    <div
-      className="flex h-dvh flex-col overflow-hidden"
-      style={{ background: "#060606" }}
-    >
+    <div className="flex h-dvh flex-col overflow-hidden bg-background">
       {/* ── Top Nav ── */}
-      <header
-        className="flex shrink-0 items-center justify-between border-b px-6 py-3"
-        style={{ borderColor: "#1a1a1a", background: "#0a0a0a" }}
-      >
+      <header className="flex shrink-0 items-center justify-between border-b border-border bg-surface px-6 py-3">
         <div className="flex items-center gap-4">
           <Link
             href="/"
             className="transition-opacity hover:opacity-60"
             style={{
-              fontFamily: "var(--font-cinzel)",
-              fontSize: "14px",
-              letterSpacing: "0.25em",
-              color: "#525252",
+              fontSize: "13px",
+              letterSpacing: "0.2em",
+              color: "var(--color-muted-foreground)",
+              fontWeight: 600,
             }}
           >
             ATLANTIS
           </Link>
-          <span style={{ color: "#1a1a1a" }}>/</span>
+          <span className="text-border">/</span>
           <span
             style={{
-              fontFamily: "var(--font-cinzel)",
-              fontSize: "14px",
-              letterSpacing: "0.25em",
-              color: "#d4d4d4",
+              fontSize: "13px",
+              letterSpacing: "0.2em",
+              color: "var(--color-foreground)",
+              fontWeight: 600,
             }}
           >
             TAKEOFF
@@ -192,14 +186,11 @@ export default function TakeoffPage() {
             <button
               onClick={() => setPanelMode("workspace")}
               aria-pressed={panelMode === "workspace"}
-              className="rounded px-3 py-1.5 text-xs transition-colors"
+              className="rounded px-3 py-1.5 text-xs font-medium tracking-widest transition-colors"
               style={{
-                fontFamily: "var(--font-ibm-plex-mono)",
-                fontSize: "10px",
-                letterSpacing: "0.1em",
-                background: panelMode === "workspace" ? "#1a1a1a" : "transparent",
-                color: panelMode === "workspace" ? "#d4d4d4" : "#444",
-                border: `1px solid ${panelMode === "workspace" ? "#333" : "#1a1a1a"}`,
+                background: panelMode === "workspace" ? "var(--color-canvas)" : "transparent",
+                color: panelMode === "workspace" ? "var(--color-foreground)" : "var(--color-muted-foreground)",
+                border: `1px solid ${panelMode === "workspace" ? "var(--color-border)" : "transparent"}`,
               }}
             >
               WORKSPACE
@@ -207,14 +198,11 @@ export default function TakeoffPage() {
             <button
               onClick={() => setPanelMode("results")}
               aria-pressed={panelMode === "results"}
-              className="rounded px-3 py-1.5 text-xs transition-colors"
+              className="rounded px-3 py-1.5 text-xs font-medium tracking-widest transition-colors"
               style={{
-                fontFamily: "var(--font-ibm-plex-mono)",
-                fontSize: "10px",
-                letterSpacing: "0.1em",
-                background: panelMode === "results" ? "rgba(220,38,38,0.12)" : "transparent",
-                color: panelMode === "results" ? "#dc2626" : "#444",
-                border: `1px solid ${panelMode === "results" ? "rgba(220,38,38,0.3)" : "#1a1a1a"}`,
+                background: panelMode === "results" ? "rgba(220,38,38,0.08)" : "transparent",
+                color: panelMode === "results" ? "#dc2626" : "var(--color-muted-foreground)",
+                border: `1px solid ${panelMode === "results" ? "rgba(220,38,38,0.25)" : "transparent"}`,
               }}
             >
               RESULTS
@@ -275,20 +263,10 @@ export default function TakeoffPage() {
             {error ? (
               <div className="flex h-full items-center justify-center p-8">
                 <div className="text-center">
-                  <p
-                    className="mb-2 text-xs"
-                    style={{
-                      fontFamily: "var(--font-ibm-plex-mono)",
-                      color: "#dc2626",
-                      letterSpacing: "0.1em",
-                    }}
-                  >
+                  <p className="mb-2 font-mono text-xs font-semibold tracking-widest text-accent">
                     ERROR
                   </p>
-                  <p
-                    className="mb-4 text-sm"
-                    style={{ fontFamily: "var(--font-ibm-plex-mono)", color: "#525252" }}
-                  >
+                  <p className="mb-4 text-sm text-muted-foreground">
                     {error}
                   </p>
                   <button
@@ -296,13 +274,7 @@ export default function TakeoffPage() {
                       setError(null);
                       setPanelMode("workspace");
                     }}
-                    className="rounded px-4 py-2 text-xs transition-colors"
-                    style={{
-                      fontFamily: "var(--font-ibm-plex-mono)",
-                      background: "#1a1a1a",
-                      color: "#d4d4d4",
-                      letterSpacing: "0.1em",
-                    }}
+                    className="rounded border border-border bg-canvas px-4 py-2 text-xs font-medium tracking-widest text-foreground transition-colors hover:bg-muted"
                   >
                     BACK TO WORKSPACE
                   </button>

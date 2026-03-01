@@ -113,7 +113,7 @@ class TakeoffEngine:
             logger.info("[TAKEOFF] %s", message)
 
         # Generate job ID
-        job_id = str(uuid.uuid4())[:8]
+        job_id = str(uuid.uuid4())[:12]
         start_time = time.time()
 
         # Validate mode immediately — before any expensive extraction calls

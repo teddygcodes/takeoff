@@ -28,7 +28,7 @@ class ModelRouter:
     """Routes takeoff tasks to the appropriate model and temperature."""
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
+        self.api_key = (api_key or os.getenv("ANTHROPIC_API_KEY", "")).strip()
         self._provider = LLMProvider(api_key=self.api_key, mode="api")
 
         # Stats
