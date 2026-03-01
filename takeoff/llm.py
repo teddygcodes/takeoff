@@ -59,6 +59,7 @@ class LLMProvider:
         api_key: Optional[str] = None,
         mode: str = "api",
         cache_enabled: bool = True,
+        timeout: Optional[float] = None,
     ):
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
         self.mode = mode
@@ -80,7 +81,10 @@ class LLMProvider:
 
         # Initialize Anthropic client
         if self.api_key:
-            self.client = anthropic.Anthropic(api_key=self.api_key)
+            client_kwargs: dict = {"api_key": self.api_key}
+            if timeout is not None:
+                client_kwargs["timeout"] = timeout
+            self.client = anthropic.Anthropic(**client_kwargs)
         else:
             self.client = None
 

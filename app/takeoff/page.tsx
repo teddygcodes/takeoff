@@ -135,8 +135,11 @@ export default function TakeoffPage() {
           }
         }
       } catch (err) {
-        if (err instanceof Error && err.name !== "AbortError") {
-          setError(err.message || "Something went wrong");
+        if (err instanceof Error && err.name === "AbortError") {
+          setIsRunning(false);
+          setPipelineStatus("Cancelled");
+        } else {
+          setError((err instanceof Error ? err.message : null) || "Something went wrong");
           setIsRunning(false);
           setPipelineStatus("");
         }

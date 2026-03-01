@@ -108,13 +108,13 @@ def verify_api_key(api_key: str) -> None:
     """
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is not set")
-    provider = LLMProvider(api_key=api_key, mode="api")
+    provider = LLMProvider(api_key=api_key, mode="api", timeout=10.0)
     response = provider.complete(
         system_prompt="You are a test assistant.",
         user_prompt="Reply with OK",
         max_tokens=5,
         temperature=0.0,
-        model="claude-haiku-4-5-20251001",
+        model=MODEL_IDS["haiku"],
         task_type="takeoff_test",
     )
     content = response.content or ""

@@ -115,6 +115,8 @@ export function SnippingTool({
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
+      role="presentation"
+      aria-hidden="true"
       style={{
         position: "absolute",
         top: 0,

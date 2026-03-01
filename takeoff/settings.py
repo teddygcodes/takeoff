@@ -8,13 +8,29 @@ import os
 
 # ─── API Configuration ────────────────────────────────────────────────────────
 
+def _env_int(key: str, default: int) -> int:
+    raw = os.getenv(key, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        raise RuntimeError(f"Invalid value for env var {key}={raw!r}: must be an integer")
+
+
+def _env_float(key: str, default: float) -> float:
+    raw = os.getenv(key, str(default))
+    try:
+        return float(raw)
+    except ValueError:
+        raise RuntimeError(f"Invalid value for env var {key}={raw!r}: must be a float")
+
+
 API_CONFIG = {
     "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
-    "max_tokens": int(os.getenv("ANTHROPIC_MAX_TOKENS", "4096")),
-    "temperature": float(os.getenv("ANTHROPIC_TEMPERATURE", "0.4")),
-    "rate_limit_seconds": float(os.getenv("RATE_LIMIT_SECONDS", "1.0")),
+    "max_tokens": _env_int("ANTHROPIC_MAX_TOKENS", 4096),
+    "temperature": _env_float("ANTHROPIC_TEMPERATURE", 0.4),
+    "rate_limit_seconds": _env_float("RATE_LIMIT_SECONDS", 1.0),
     "rate_limit_enabled": os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true",
-    "temperature_research": float(os.getenv("TEMPERATURE_RESEARCH", "0.3")),
+    "temperature_research": _env_float("TEMPERATURE_RESEARCH", 0.3),
 }
 
 # ─── Model IDs ────────────────────────────────────────────────────────────────

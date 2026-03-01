@@ -149,14 +149,37 @@ def extract_json_from_response(response_text: str, agent_name: str = "Extractor"
         except json.JSONDecodeError as _e2:
             _errors.append(f"fence: {_e2}")
 
-    # Strategy 3: Extract from first { to last }
+    # Strategy 3: Extract from first { to its matching } using a depth counter.
+    # rfind('}') was incorrect — it would grab trailing text or a second JSON object.
     first_brace = response_text.find('{')
-    last_brace = response_text.rfind('}')
-    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-        try:
-            return json.loads(response_text[first_brace:last_brace + 1])
-        except json.JSONDecodeError as _e3:
-            _errors.append(f"braces: {_e3}")
+    if first_brace != -1:
+        depth = 0
+        in_string = False
+        escape_next = False
+        matching_close = -1
+        for i, ch in enumerate(response_text[first_brace:], start=first_brace):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == '\\' and in_string:
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if not in_string:
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0:
+                        matching_close = i
+                        break
+        if matching_close != -1:
+            try:
+                return json.loads(response_text[first_brace:matching_close + 1])
+            except json.JSONDecodeError as _e3:
+                _errors.append(f"braces: {_e3}")
 
     detail = "; ".join(_errors) or "no JSON structure found"
     logger.warning("[%s] ERROR: Failed to extract valid JSON. Strategies: %s", agent_name, detail)

@@ -117,6 +117,15 @@ Snippet JSON format (single file):
                 if not img_path.exists():
                     print(f"[ERROR] Snippet '{snippet.get('id', '?')}' references missing image file: {img_path}", file=sys.stderr)
                     sys.exit(1)
+                _MAX_IMAGE_BYTES = 50 * 1024 * 1024  # 50 MB
+                img_size = img_path.stat().st_size
+                if img_size > _MAX_IMAGE_BYTES:
+                    print(
+                        f"[ERROR] Snippet '{snippet.get('id', '?')}' image too large "
+                        f"({img_size // (1024 * 1024)} MB, max 50 MB): {img_path}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
                 with open(img_path, "rb") as img_file:
                     snippet["image_data"] = base64.b64encode(img_file.read()).decode()
     elif input_path.is_file():

@@ -863,7 +863,7 @@ def validate_grand_total(agent_output: dict, agent_name: str = "Agent") -> Grand
         return GrandTotalResult(counts=agent_output, was_corrected=False)
 
     discrepancy = abs(reported_total - computed_total) / computed_total
-    if discrepancy > 0.05:
+    if discrepancy > 0.02:
         logger.warning(
             "%s grand_total_fixtures=%s differs from computed sum=%s (%.1f%% discrepancy). Using computed sum.",
             agent_name, reported_total, computed_total, discrepancy * 100

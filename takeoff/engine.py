@@ -710,6 +710,9 @@ class TakeoffEngine:
             revised = revised_counts.get(tag, {})
             original_total = fc.get("total", 0)
             final_total = revised.get("total", original_total) if revised else original_total
+            # Clamp reconciler-revised totals to a sane range to guard against hallucinated values.
+            if revised:
+                final_total = max(0, min(final_total, max(9999, original_total * 10)))
             delta = revised.get("delta", "0") if revised else "0"
 
             schedule_entry = fixture_schedule.fixtures.get(tag, {})

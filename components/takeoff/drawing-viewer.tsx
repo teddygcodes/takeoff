@@ -352,7 +352,7 @@ export function DrawingViewer({
           role="button"
           tabIndex={0}
           aria-label="Upload PDF"
-          onKeyDown={(e) => e.key === "Enter" && onUpload()}
+          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onUpload()}
         >
           <div className="flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed border-border p-16 transition-colors hover:border-muted">
             <Upload className="h-12 w-12 text-muted-foreground" />
