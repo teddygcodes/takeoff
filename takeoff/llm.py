@@ -140,6 +140,10 @@ class LLMProvider:
                 return LLMResponse(
                     content=cached["content"],
                     model=model,
+                    input_tokens=cached.get("input_tokens", 0),
+                    output_tokens=cached.get("output_tokens", 0),
+                    cost_usd=0.0,  # No API cost incurred for cache hit
+                    latency_ms=cached.get("latency_ms", 0),
                     cached=True,
                     metadata={"task_type": task_type},
                 )
@@ -179,9 +183,14 @@ class LLMProvider:
                 self.total_output_tokens += output_tokens
                 self.call_count += 1
 
-                # Cache the response
+                # Cache the response (store tokens/latency for informational cache hits)
                 if self.cache_enabled:
-                    self._cache[cache_key] = {"content": content}
+                    self._cache[cache_key] = {
+                        "content": content,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "latency_ms": latency_ms,
+                    }
 
                 return LLMResponse(
                     content=content,

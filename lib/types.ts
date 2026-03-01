@@ -34,6 +34,7 @@ export interface FixtureRow {
   difficulty: string;
   flags?: string[];
   counts_by_area?: Record<string, number>;
+  cell_counts?: Record<string, number> | null;
   notes?: string;
   accessories?: string[];
 }
@@ -46,6 +47,7 @@ export interface AdversarialEntry {
   resolution?: string;
   explanation?: string;
   verdict?: string;
+  cell_id?: string | null;
 }
 
 export interface ConfidenceBreakdown {
@@ -83,6 +85,11 @@ export interface TakeoffResult {
   constitutional_violations: Violation[];
   flags?: string[];
   ruling_summary?: string;
+  grid_config?: {
+    rows: number;
+    cols: number;
+    cells: string[];
+  } | null;
 }
 
 export interface PipelineStep {

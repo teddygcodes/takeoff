@@ -143,6 +143,7 @@ export function SnippetTray({
                     onClick={() => toggleSection(labelKey)}
                     className="flex w-full items-center gap-2 px-1 py-1.5 text-left"
                     aria-expanded={!collapsed}
+                    aria-label={`Toggle ${info?.title || labelKey} section`}
                   >
                     <span className="text-xs text-muted-foreground">
                       {collapsed ? "\u25B6" : "\u25BC"}
@@ -182,6 +183,7 @@ export function SnippetTray({
                                   value={editSubLabel}
                                   onChange={(e) => setEditSubLabel(e.target.value)}
                                   placeholder="Area name (optional)"
+                                  maxLength={100}
                                   className="mb-2 w-full rounded-md border border-border bg-background px-2 py-1.5 font-sans text-xs text-foreground placeholder:text-muted-foreground"
                                 />
                                 <div className="flex gap-2">

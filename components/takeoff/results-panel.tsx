@@ -28,7 +28,11 @@ function exportCSV(data: TakeoffResult) {
     ["Confidence", `${(data.confidence_score * 100).toFixed(0)}% (${data.confidence_band})`],
     ["Verdict", data.judge_verdict],
   ];
-  const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+  const csvCell = (c: unknown) => {
+    const s = Array.isArray(c) ? c.join("; ") : String(c);
+    return `"${s.replace(/"/g, '""')}"`;
+  };
+  const csv = rows.map((r) => r.map(csvCell).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -50,7 +54,7 @@ function exportJSON(data: TakeoffResult) {
 
 function buildTableText(data: TakeoffResult): string {
   const header = "TYPE\tDESCRIPTION\tCOUNT\tREVISED\tDIFF\tDIFFICULTY";
-  const esc = (v: string | number) => String(v).replace(/\t/g, " ");
+  const esc = (v: string | number) => String(v).replace(/[\t\n\r]/g, " ");
   const rows = data.fixture_counts.map(
     (f) =>
       `${esc(f.type_tag)}\t${esc(f.description)}\t${f.total}\t${f.revised ?? f.total}\t${f.delta ? (f.delta > 0 ? "+" + f.delta : f.delta) : "—"}\t${esc(f.difficulty)}`
@@ -364,7 +368,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
 
                     {entry.explanation && (
                       <div className="rounded-md border border-border bg-sidebar p-3">
-                        <span className={`mr-2 font-mono text-xs font-bold ${res.text}`}>
+                        <span className={`mr-2 font-mono text-xs font-bold ${res.text}`} aria-label={`Resolution: ${res.label}`}>
                           {res.label}
                         </span>
                         <span className="text-xs leading-relaxed text-muted-foreground">{entry.explanation}</span>
@@ -421,7 +425,14 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
               </div>
 
               {/* Overall bar */}
-              <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-2 w-full overflow-hidden rounded-full bg-muted"
+                role="progressbar"
+                aria-valuenow={Math.round(data.confidence_score * 100)}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label="Confidence score"
+              >
                 <div
                   className="h-full rounded-full transition-all"
                   style={{

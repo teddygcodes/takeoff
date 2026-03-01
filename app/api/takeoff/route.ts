@@ -40,15 +40,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const b = body as Record<string, unknown>;
+  const drawingName = b.drawing_name;
   if (
     typeof body !== "object" ||
     body === null ||
-    !Array.isArray((body as Record<string, unknown>).snippets) ||
-    typeof (body as Record<string, unknown>).mode !== "string" ||
-    !VALID_MODES.has((body as Record<string, unknown>).mode as string)
+    !Array.isArray(b.snippets) ||
+    typeof b.mode !== "string" ||
+    !VALID_MODES.has(b.mode as string) ||
+    (drawingName !== undefined && drawingName !== null && (typeof drawingName !== "string" || (drawingName as string).length > 255))
   ) {
     return new Response(
-      `data: ${JSON.stringify({ type: "error", message: "Request must include snippets (array) and mode (fast|strict|liability)" })}\n\n`,
+      `data: ${JSON.stringify({ type: "error", message: "Request must include snippets (array) and mode (fast|strict|liability); drawing_name must be a string ≤255 chars" })}\n\n`,
       { status: 400, headers: { "Content-Type": "text/event-stream" } }
     );
   }
@@ -59,7 +62,7 @@ export async function POST(req: NextRequest) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(300_000),
     duplex: "half",
   } as RequestInit & { duplex: string };
 

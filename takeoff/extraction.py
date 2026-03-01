@@ -7,6 +7,8 @@ Vision calls use the Anthropic SDK directly since ModelRouter.complete() handles
 text-only prompts. All extraction functions send base64 images to Claude Sonnet.
 """
 
+import base64
+import io
 import json
 import logging
 import os
@@ -14,10 +16,20 @@ import random
 import re
 import threading
 import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 
+try:
+    from PIL import Image as _PilImage
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+
 logger = logging.getLogger(__name__)
+
+from takeoff.settings import API_CONFIG
 
 try:
     import anthropic
@@ -128,6 +140,39 @@ class PanelData:
     panel_name: Optional[str] = None
     circuits: List[dict] = field(default_factory=list)  # [{circuit, breaker_size, load_va, description}]
     total_load_va: Optional[float] = None
+    warnings: List[str] = field(default_factory=list)
+
+
+# ─── Grid Counting Data Classes ───────────────────────────────────────────────
+
+@dataclass
+class GridCell:
+    """A single cell from a gridded RCP snippet."""
+    cell_id: str          # "A1", "B2", etc. (row letter + col number)
+    image_base64: str     # base64 PNG of this cell
+    row: int              # 0-indexed
+    col: int              # 0-indexed
+    bounds: dict          # {x, y, width, height} as fraction of full image (0.0–1.0)
+    area_label: str       # parent area label, e.g. "Floor 2 North Wing"
+
+
+@dataclass
+class CellTypeCount:
+    """Count of a single fixture type in a single grid cell."""
+    cell_id: str
+    type_tag: str
+    count: int
+    confidence: str = "medium"  # low | medium | high
+    notes: str = ""
+
+
+@dataclass
+class GridResult:
+    """Complete gridded count results for one RCP area."""
+    area_label: str
+    grid_cells: List[GridCell]
+    cell_type_counts: List[CellTypeCount]   # every (cell, type) pair counted
+    area_totals: Dict[str, int]             # type_tag → total across all cells
     warnings: List[str] = field(default_factory=list)
 
 
@@ -618,3 +663,279 @@ Return ONLY valid JSON:
     except _EXTRACTION_ERRORS as e:
         logger.error("[EXTRACTION] ERROR extracting panel schedule: %s", e, exc_info=True)
         return PanelData(warnings=[f"Extraction failed: {str(e)}"])
+
+
+# ─── Grid-Based RCP Counting ──────────────────────────────────────────────────
+
+_MIN_CELL_PX = 50  # Minimum cell dimension in pixels — smaller cells are not useful
+
+
+def generate_grid(
+    image_base64: str,
+    area_label: str,
+    rows: int = 3,
+    cols: int = 3
+) -> List[GridCell]:
+    """Split an RCP snippet image into a grid of cells.
+
+    Args:
+        image_base64: Base64-encoded PNG/JPEG of the RCP area
+        area_label: Human-readable area name, carried into each cell
+        rows: Number of grid rows (default 3)
+        cols: Number of grid columns (default 3)
+
+    Returns:
+        List of GridCell objects, ordered row-major (A1, A2, ..., C3)
+
+    Raises:
+        RuntimeError: If PIL is not available
+        ValueError: If the image cannot be decoded
+    """
+    if not HAS_PIL:
+        raise RuntimeError("Pillow is required for grid extraction. Run: pip install Pillow")
+
+    # Strip data URI prefix if present
+    raw_b64 = image_base64
+    if raw_b64.startswith("data:"):
+        raw_b64 = raw_b64.split(",", 1)[1]
+
+    img = _PilImage.open(io.BytesIO(base64.b64decode(raw_b64))).convert("RGB")
+    w, h = img.size
+
+    # Auto-reduce grid size if cells would be too small
+    while rows > 1 and h // rows < _MIN_CELL_PX:
+        rows -= 1
+    while cols > 1 and w // cols < _MIN_CELL_PX:
+        cols -= 1
+
+    cell_w = w // cols
+    cell_h = h // rows
+
+    cells: List[GridCell] = []
+    for r in range(rows):
+        for c in range(cols):
+            x0 = c * cell_w
+            y0 = r * cell_h
+            # Last column/row captures remainder pixels to avoid off-by-one gaps
+            x1 = w if c == cols - 1 else (c + 1) * cell_w
+            y1 = h if r == rows - 1 else (r + 1) * cell_h
+
+            crop = img.crop((x0, y0, x1, y1))
+            buf = io.BytesIO()
+            crop.save(buf, format="PNG")
+            cell_b64 = base64.b64encode(buf.getvalue()).decode()
+
+            cell_id = chr(ord("A") + r) + str(c + 1)
+            bounds = {
+                "x": x0 / w,
+                "y": y0 / h,
+                "width": (x1 - x0) / w,
+                "height": (y1 - y0) / h,
+            }
+            cells.append(GridCell(
+                cell_id=cell_id,
+                image_base64=cell_b64,
+                row=r,
+                col=c,
+                bounds=bounds,
+                area_label=area_label,
+            ))
+
+    logger.debug("[GRID] Generated %d cells (%dx%d) from %dx%d image for '%s'",
+                 len(cells), rows, cols, w, h, area_label)
+    return cells
+
+
+def count_fixture_type_in_cell(
+    client,
+    cell: GridCell,
+    type_tag: str,
+    type_description: str,
+    schedule_context: str,
+    grid_dimensions: str,
+) -> CellTypeCount:
+    """Count a single fixture type within a single grid cell via vision.
+
+    Args:
+        client: Anthropic vision client
+        cell: The grid cell to examine
+        type_tag: Fixture type identifier (e.g. "A")
+        type_description: Human description (e.g. "2x4 LED Troffer")
+        schedule_context: Full schedule as text reference (other types listed)
+        grid_dimensions: e.g. "3x3" for display in the prompt
+
+    Returns:
+        CellTypeCount with count, confidence, and any notes
+    """
+    system_prompt = (
+        f"You are an expert electrical estimator counting fixtures in a section of a "
+        f"Reflected Ceiling Plan.\n\n"
+        f"FIXTURE TO COUNT: {type_tag} — {type_description}\n"
+        f"CELL POSITION: {cell.cell_id} in a {grid_dimensions} grid of area \"{cell.area_label}\"\n\n"
+        f"RULES:\n"
+        f"1. Count ONLY fixture type {type_tag}. Ignore all other types completely.\n"
+        f"2. Count a fixture if its center point or more than 50% of its symbol is within this cell image.\n"
+        f"3. If a fixture symbol appears cut off at the edge and you cannot determine if >50% is "
+        f"in this cell, note it but do NOT count it.\n"
+        f"4. If you cannot identify a symbol as type {type_tag}, do NOT count it — describe it in notes.\n"
+        f"5. Be precise. Count individually. Do not estimate or round.\n\n"
+        f"FIXTURE SCHEDULE FOR REFERENCE (so you know what other types look like — do NOT count them):\n"
+        f"{schedule_context}\n\n"
+        f'Respond with ONLY valid JSON:\n'
+        f'{{"type_tag": "{type_tag}", "count": <integer>, "confidence": "low|medium|high", "notes": "any observations"}}'
+    )
+    user_text = (
+        f"Count all Type {type_tag} ({type_description}) fixtures in this cell. "
+        f"This is cell {cell.cell_id} of area \"{cell.area_label}\"."
+    )
+
+    try:
+        raw = _call_vision_with_retry(
+            client, system_prompt, user_text, cell.image_base64,
+            max_tokens=200, temperature=0.0,
+        )
+        parsed = extract_json_from_response(raw, f"GRID_CELL_{cell.cell_id}_{type_tag}")
+        count = parsed.get("count", 0)
+        if not isinstance(count, (int, float)) or count < 0:
+            count = 0
+        return CellTypeCount(
+            cell_id=cell.cell_id,
+            type_tag=type_tag,
+            count=int(count),
+            confidence=parsed.get("confidence", "medium"),
+            notes=parsed.get("notes", ""),
+        )
+    except _EXTRACTION_ERRORS as e:
+        logger.warning("[GRID] Cell %s type %s extraction failed: %s", cell.cell_id, type_tag, e)
+        return CellTypeCount(
+            cell_id=cell.cell_id,
+            type_tag=type_tag,
+            count=0,
+            confidence="low",
+            notes="EXTRACTION_FAILED",
+        )
+
+
+def extract_rcp_counts_gridded(
+    snippet_image: str,
+    fixture_schedule: FixtureSchedule,
+    area_label: str,
+    grid_rows: int = 3,
+    grid_cols: int = 3,
+) -> GridResult:
+    """Extract fixture counts from an RCP snippet using a grid-based approach.
+
+    Splits the image into a grid, then counts each fixture type separately
+    in each cell, running all cell×type calls in parallel.
+
+    Args:
+        snippet_image: Base64-encoded PNG of the RCP area
+        fixture_schedule: Previously extracted fixture schedule for context
+        area_label: Human-readable area name
+        grid_rows: Number of grid rows (default 3)
+        grid_cols: Number of grid columns (default 3)
+
+    Returns:
+        GridResult with per-cell counts and area totals
+
+    Raises:
+        RuntimeError: If >30% of cell calls fail (caller should fall back)
+    """
+    cells = generate_grid(snippet_image, area_label, grid_rows, grid_cols)
+
+    # Build fixture type list (skip empty descriptions)
+    type_items = [
+        (tag, info.get("description", "") if isinstance(info, dict) else "")
+        for tag, info in fixture_schedule.fixtures.items()
+        if info and (info.get("description") if isinstance(info, dict) else True)
+    ]
+
+    if not type_items:
+        return GridResult(
+            area_label=area_label,
+            grid_cells=cells,
+            cell_type_counts=[],
+            area_totals={},
+            warnings=["No fixture types in schedule — cannot count"],
+        )
+
+    # Build schedule context string for the prompt
+    schedule_context = "\n".join(
+        f"  {tag}: {(info.get('description', '') if isinstance(info, dict) else '')}"
+        for tag, info in fixture_schedule.fixtures.items()
+    )
+
+    actual_rows = (max(c.row for c in cells) + 1) if cells else grid_rows
+    actual_cols = (max(c.col for c in cells) + 1) if cells else grid_cols
+    grid_dimensions = f"{actual_rows}x{actual_cols}"
+
+    client = _get_vision_client()
+
+    # Build all (cell, type) tasks
+    tasks = [
+        (cell, type_tag, type_desc)
+        for cell in cells
+        for type_tag, type_desc in type_items
+    ]
+
+    max_workers = min(len(tasks), API_CONFIG.get("vision_max_workers", 4) * 2)
+    all_cell_counts: List[CellTypeCount] = [None] * len(tasks)  # type: ignore
+
+    with ThreadPoolExecutor(max_workers=max_workers) as _ex:
+        fut_map = {
+            _ex.submit(count_fixture_type_in_cell, client, cell, tag, desc, schedule_context, grid_dimensions): i
+            for i, (cell, tag, desc) in enumerate(tasks)
+        }
+        for fut in as_completed(fut_map):
+            idx = fut_map[fut]
+            try:
+                all_cell_counts[idx] = fut.result()
+            except Exception as _e:
+                cell, tag, _ = tasks[idx]
+                logger.warning("[GRID] Future failed for cell %s type %s: %s", cell.cell_id, tag, _e)
+                all_cell_counts[idx] = CellTypeCount(cell.cell_id, tag, 0, "low", "EXTRACTION_FAILED")
+
+    # Check failure rate
+    failures = sum(1 for ctc in all_cell_counts if ctc and ctc.notes == "EXTRACTION_FAILED")
+    if tasks and failures / len(tasks) > 0.30:
+        raise RuntimeError(
+            f"[GRID] Too many cell failures ({failures}/{len(tasks)}) for '{area_label}' — falling back"
+        )
+
+    # Aggregate totals
+    area_totals: Dict[str, int] = defaultdict(int)
+    for ctc in all_cell_counts:
+        if ctc:
+            area_totals[ctc.type_tag] += ctc.count
+
+    # Collect warnings
+    warnings: List[str] = []
+    for ctc in all_cell_counts:
+        if ctc and ctc.confidence == "low" and ctc.count > 0:
+            warnings.append(f"Low confidence on {ctc.type_tag} in cell {ctc.cell_id}")
+        if ctc and ctc.notes == "EXTRACTION_FAILED":
+            warnings.append(f"Cell {ctc.cell_id} type {ctc.type_tag} extraction failed — count set to 0")
+
+    logger.info(
+        "[GRID] '%s': %d cells × %d types = %d tasks; totals: %s",
+        area_label, len(cells), len(type_items), len(tasks), dict(area_totals)
+    )
+
+    return GridResult(
+        area_label=area_label,
+        grid_cells=cells,
+        cell_type_counts=[ctc for ctc in all_cell_counts if ctc is not None],
+        area_totals=dict(area_totals),
+        warnings=warnings,
+    )
+
+
+def grid_result_to_area_count(grid_result: GridResult) -> AreaCount:
+    """Convert a GridResult to an AreaCount for backward compatibility with Counter agent."""
+    notes = [ctc.notes for ctc in grid_result.cell_type_counts if ctc.notes and ctc.notes != "EXTRACTION_FAILED"]
+    return AreaCount(
+        area_label=grid_result.area_label,
+        counts_by_type=grid_result.area_totals,
+        notes=notes[:20],
+        warnings=grid_result.warnings,
+    )

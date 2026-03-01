@@ -130,6 +130,11 @@ export function DrawingViewer({
     }
   }, []);
 
+  // Cancel any in-progress render task on unmount to avoid canvas-after-unmount errors
+  useEffect(() => {
+    return () => { renderTaskRef.current?.cancel(); };
+  }, []);
+
   // Immediate re-render on page change
   useEffect(() => {
     if (pdfLoaded) renderPage(currentPage, zoomRef.current);
@@ -642,7 +647,7 @@ export function DrawingViewer({
           }}
         >
           {/* PDF canvas — CSS size set explicitly in renderPage, never CSS-upscaled */}
-          <canvas ref={pdfCanvasRef} />
+          <canvas ref={pdfCanvasRef} role="img" aria-label={`PDF drawing page ${currentPage}`} />
 
           {/* Snippet overlays — positioned in zoom=100 space, scaled by zoom */}
           {pageSnippets.map((s) => (
