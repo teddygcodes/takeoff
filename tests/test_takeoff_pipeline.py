@@ -3509,6 +3509,77 @@ class TestEngineGridFlag(unittest.TestCase):
         mock_rcp.assert_called()
         mock_grid.assert_not_called()
 
+    def test_engine_all_areas_fallback_checker_still_runs(self):
+        """When ALL RCP areas fail grid extraction, engine falls back to full-image checker.
+
+        Specifically: extract_rcp_counts_gridded raises RuntimeError for every call,
+        extract_rcp_counts is called as fallback, and the Checker's generate_attacks
+        is called with rcp_images (not grid_results). grid_config must be absent from result.
+        """
+        import base64
+        import io
+        from unittest.mock import patch, MagicMock, call
+        from PIL import Image
+        from takeoff.engine import TakeoffEngine
+        from takeoff.extraction import AreaCount, FixtureSchedule
+
+        buf = io.BytesIO()
+        Image.new("RGB", (200, 200), "white").save(buf, format="PNG")
+        img_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        snippets = [
+            {"id": "s1", "label": "fixture_schedule", "sub_label": "Schedule", "image_data": img_b64, "page_number": 1},
+            {"id": "s2", "label": "rcp", "sub_label": "Floor 1", "image_data": img_b64, "page_number": 1},
+            {"id": "s3", "label": "rcp", "sub_label": "Floor 2", "image_data": img_b64, "page_number": 2},
+        ]
+
+        fake_schedule = FixtureSchedule()
+        fake_schedule.fixtures["A"] = {"description": "2x4 LED Troffer"}
+        fake_area = AreaCount(area_label="Floor 1", counts_by_type={"A": 3})
+        fake_counter = MagicMock()
+        fake_counter.generate_count.return_value = MagicMock(
+            data={"fixture_counts": [{"type_tag": "A", "total": 6, "counts_by_area": {"Floor 1": 3, "Floor 2": 3}}],
+                  "grand_total_fixtures": 6, "areas_covered": ["Floor 1", "Floor 2"]},
+            parse_error=False,
+        )
+        fake_checker = MagicMock()
+        fake_checker.generate_attacks.return_value = MagicMock(
+            data={"attacks": [], "total_attacks": 0, "critical_count": 0, "_model_failure": False},
+            raw_response="{}",
+        )
+        fake_judge = MagicMock()
+        fake_judge.evaluate.return_value = {
+            "verdict": "PASS", "violations": [], "flags": [], "ruling_summary": "ok"
+        }
+
+        with patch("takeoff.engine.extract_fixture_schedule", return_value=fake_schedule), \
+             patch("takeoff.engine.extract_rcp_counts_gridded", side_effect=RuntimeError("grid failed")) as mock_grid, \
+             patch("takeoff.engine.extract_rcp_counts", return_value=fake_area) as mock_rcp, \
+             patch("takeoff.engine.extract_plan_notes", return_value=[]), \
+             patch("takeoff.engine.extract_panel_schedule", return_value=None):
+
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+                db_path = f.name
+            engine = TakeoffEngine(db_path=db_path)
+            engine.counter = fake_counter
+            engine.checker = fake_checker
+            engine.judge = fake_judge
+
+            result = engine.run_takeoff(snippets, mode="fast", use_grid=True)
+
+        # Grid was attempted (and failed) for both areas
+        self.assertEqual(mock_grid.call_count, 2)
+        # Full-image fallback ran for both areas
+        self.assertEqual(mock_rcp.call_count, 2)
+        # Checker ran — verify call used rcp_images (no grid_results arg or empty)
+        fake_checker.generate_attacks.assert_called_once()
+        call_kwargs = fake_checker.generate_attacks.call_args
+        # When all areas fall back, the else: branch runs — grid_results not passed
+        self.assertIsNone(call_kwargs.kwargs.get("grid_results"))
+        # grid_config must be absent since no areas succeeded grid extraction
+        self.assertNotIn("grid_config", result)
+
 
 # ══════════════════════════════════════════════════════════════════════
 # Regression tests for grid bug fixes (Round 17)

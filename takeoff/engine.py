@@ -807,13 +807,16 @@ class TakeoffEngine:
                 counts_by_area = original_areas
                 area_flags = []
 
-            # Aggregate per-cell counts for this type across all grid areas
+            # Aggregate per-cell counts for this type across all grid areas.
+            # Key format: "AreaLabel/CellID" — prevents collision when multiple areas
+            # share identical cell IDs (e.g. "A1" in Floor2 vs "A1" in Floor3).
             cell_counts: Dict = {}
             if grid_results:
                 for gr in grid_results.values():
                     for ctc in gr.cell_type_counts:
                         if ctc.type_tag == tag:
-                            cell_counts[ctc.cell_id] = cell_counts.get(ctc.cell_id, 0) + ctc.count
+                            k = f"{gr.area_label}/{ctc.cell_id}"
+                            cell_counts[k] = cell_counts.get(k, 0) + ctc.count
 
             fixture_table.append({
                 "type_tag": tag,
@@ -871,9 +874,24 @@ class TakeoffEngine:
             }
         }
         if grid_results:
+            # Build canonical cell list from the first area's actual dimensions.
+            # We cannot concatenate cells across all areas — each area shares the same
+            # cell IDs (A1–C3) so concatenation produces duplicates and the :9 cap
+            # silently drops any second area. Derive from actual grid dimensions instead.
+            _first_gr = next(iter(grid_results.values()))
+            if _first_gr.grid_cells:
+                _actual_rows = max(c.row for c in _first_gr.grid_cells) + 1
+                _actual_cols = max(c.col for c in _first_gr.grid_cells) + 1
+            else:
+                _actual_rows, _actual_cols = grid_rows, grid_cols
+            _canonical_cells = [
+                chr(ord("A") + r) + str(c + 1)
+                for r in range(_actual_rows)
+                for c in range(_actual_cols)
+            ]
             result["grid_config"] = {
-                "rows": grid_rows,
-                "cols": grid_cols,
-                "cells": [c.cell_id for gr in grid_results.values() for c in gr.grid_cells][:9],
+                "rows": _actual_rows,
+                "cols": _actual_cols,
+                "cells": _canonical_cells,
             }
         return result

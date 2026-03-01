@@ -878,7 +878,7 @@ def extract_rcp_counts_gridded(
         for type_tag, type_desc in type_items
     ]
 
-    max_workers = min(len(tasks), API_CONFIG.get("vision_max_workers", 4) * 2)
+    max_workers = max(1, min(len(tasks), API_CONFIG.get("vision_max_workers", 4) * 2))
     all_cell_counts: List[CellTypeCount] = [None] * len(tasks)  # type: ignore
 
     with ThreadPoolExecutor(max_workers=max_workers) as _ex:

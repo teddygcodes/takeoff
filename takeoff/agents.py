@@ -524,6 +524,10 @@ Return JSON ONLY — no explanatory text:
                             )
                             if not _type_desc:
                                 continue
+                            # NOTE: This is the extraction phase's per-cell count, not the
+                            # Counter agent's output. Counter works at area level only and
+                            # does not produce per-cell counts. Using extraction count as the
+                            # best available approximation of "Counter's claim" per cell.
                             _counter_count = ctc_map.get((_cell.cell_id, _type_tag), 0)
                             tasks.append((_area_label, _cell, _type_tag, _type_desc, _counter_count))
 

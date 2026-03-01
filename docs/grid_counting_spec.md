@@ -289,7 +289,9 @@ def generate_attacks(
 
 ### Grid Verification Path
 
-The new path is `elif grid_results:` — completely separate from `if rcp_images:`. Both paths populate `vision_attacks`, which are merged with text-based attacks before deduplication.
+The new path uses `if grid_results:` (not `elif`) — both grid and full-image phases can run simultaneously when some areas succeeded grid extraction and others fell back to full-image (`rcp_images` contains the fallback areas). Both paths populate `vision_attacks`, which are merged with text-based attacks before deduplication.
+
+> **Round 17 fix:** Originally `elif grid_results:` — changed to `if grid_results:` so both phases run when grid mode has partial fallback areas.
 
 **Inner function `_check_cell_type()` — all prompt values f-string interpolated:**
 
