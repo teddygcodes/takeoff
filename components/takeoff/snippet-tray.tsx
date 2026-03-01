@@ -37,7 +37,7 @@ const MODE_INFO: Record<string, { label: string; desc: string }> = {
   liability: { label: "Liability", desc: "Maximum scrutiny for bids (~90s)" },
 };
 
-function getReadiness(snippets: Snippet[]): ReadinessStatus {
+export function getReadiness(snippets: Snippet[]): ReadinessStatus {
   const counts: Record<string, number> = {};
   for (const s of snippets) {
     counts[s.label] = (counts[s.label] || 0) + 1;
@@ -126,12 +126,6 @@ export function SnippetTray({
           <div className="flex h-full items-center justify-center p-6">
             <p className="text-center text-sm italic text-muted-foreground">
               Upload a PDF to get started
-            </p>
-          </div>
-        ) : snippets.length === 0 ? (
-          <div className="flex h-full items-center justify-center p-6">
-            <p className="text-center text-sm italic text-muted-foreground">
-              Use the Snip tool to capture regions from the drawing
             </p>
           </div>
         ) : (
@@ -272,9 +266,7 @@ export function SnippetTray({
       {hasPdf && (
         <div className="border-t border-border bg-sidebar p-4">
           {/* Status */}
-          {snippets.length > 0 && (
-            <p className="mb-3 text-center font-mono text-xs text-muted-foreground">{message}</p>
-          )}
+          <p className="mb-3 text-center font-mono text-xs text-muted-foreground">{message}</p>
 
           {/* Mode selector */}
           <div className="mb-3">

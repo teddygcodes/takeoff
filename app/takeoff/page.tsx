@@ -227,18 +227,23 @@ export default function TakeoffPage() {
                 snippets={snippets}
                 snipMode={snipMode}
                 onToggleSnip={() => setSnipMode((m) => !m)}
-                onSnipComplete={(bbox) => {
+                onSnipComplete={(bbox, imageData) => {
                   const snippet: SnippetData = {
                     id: `s${Date.now()}_${++_snippetSeq}`,
                     label: "fixture_schedule",
                     sub_label: "",
                     page_number: currentPage,
                     bbox,
+                    image_data: imageData,
                   };
                   handleSnippetCaptured(snippet);
                   setSnipMode(false);
                 }}
-                onUpload={() => setPdfLoaded(false)}
+                onPdfLoaded={(count) => {
+                  setPageCount(count);
+                  setCurrentPage(1);
+                  setPdfLoaded(true);
+                }}
                 pdfLoaded={pdfLoaded}
                 pipelineSteps={null}
                 pipelineRunning={isRunning}

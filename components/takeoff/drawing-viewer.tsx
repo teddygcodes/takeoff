@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect, useMemo } from "react";
+import * as pdfjsLib from "pdfjs-dist";
 import {
   Scissors,
   ZoomIn,
@@ -12,7 +13,13 @@ import {
 import { SnippingTool, type SnipRect } from "./snipping-tool";
 import type { Snippet, PipelineStep } from "@/lib/types";
 
+// pdfjs worker — CDN avoids Turbopack worker-bundling issues
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
 export type { Snippet as SnippetData };
+
+const CANVAS_W = 1200; // baseline CSS width at zoom=100
+const THUMB_W = 110;   // sidebar thumbnail CSS width
 
 /* ── Props ────────────────────────────────────────────────────────── */
 
@@ -23,8 +30,11 @@ interface DrawingViewerProps {
   snippets: Snippet[];
   snipMode: boolean;
   onToggleSnip: () => void;
-  onSnipComplete: (bbox: { x: number; y: number; width: number; height: number }) => void;
-  onUpload: () => void;
+  onSnipComplete: (
+    bbox: { x: number; y: number; width: number; height: number },
+    imageData: string
+  ) => void;
+  onPdfLoaded: (pageCount: number) => void;
   pdfLoaded: boolean;
   pipelineSteps: PipelineStep[] | null;
   pipelineRunning: boolean;
@@ -41,26 +51,155 @@ export function DrawingViewer({
   snipMode,
   onToggleSnip,
   onSnipComplete,
-  onUpload,
+  onPdfLoaded,
   pdfLoaded,
   pipelineSteps,
   pipelineRunning,
   snippetFlash,
 }: DrawingViewerProps) {
   const [zoom, setZoom] = useState(100);
+  const [pdfPageCssHeight, setPdfPageCssHeight] = useState(900);
   const [snipRect, setSnipRect] = useState<SnipRect | null>(null);
   const snipRectRef = useRef<SnipRect | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const startRef = useRef<{ x: number; y: number } | null>(null);
 
-  const CANVAS_W = 1200;
-  const CANVAS_H = 900;
+  // Scroll container ref — used for non-passive wheel listener to intercept browser zoom
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // PDF refs
+  const pdfCanvasRef = useRef<HTMLCanvasElement>(null);
+  const pdfDocRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
+  const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const thumbnailRefs = useRef<Record<number, HTMLCanvasElement | null>>({});
+
+  // Keep a stable ref to the current zoom for use inside async callbacks
+  const zoomRef = useRef(zoom);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+
+  // Stable ref to snipMode — lets pan handlers read current value without dep-array churn
+  const snipModeRef = useRef(snipMode);
+  useEffect(() => { snipModeRef.current = snipMode; }, [snipMode]);
+
+  // Pan state — isPanning drives grab/grabbing cursor; pan coords are local to the effect
+  const [isPanning, setIsPanning] = useState(false);
 
   /* Zoom controls */
-  const zoomIn = () => setZoom((z) => Math.min(z + 25, 300));
+  const zoomIn = () => setZoom((z) => Math.min(z + 25, 400));
   const zoomOut = () => setZoom((z) => Math.max(z - 25, 25));
-  const fitPage = () => setZoom(100);
-  const fitWidth = () => setZoom(120);
+  const fitPage = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) { setZoom(100); return; }
+    const zW = (el.clientWidth / CANVAS_W) * 100;
+    const zH = (el.clientHeight / pdfPageCssHeight) * 100;
+    setZoom(Math.round(Math.min(400, Math.max(25, Math.min(zW, zH) * 0.95))));
+  }, [pdfPageCssHeight]);
+  const fitWidth = useCallback(() => {
+    const w = scrollContainerRef.current?.clientWidth ?? CANVAS_W;
+    setZoom(Math.round(Math.min(400, Math.max(25, (w / CANVAS_W) * 100))));
+  }, []);
+
+  /* ── Main PDF rendering ─────────────────────────────────────── */
+
+  const renderPage = useCallback(async (pageNum: number, zoomVal: number) => {
+    if (!pdfDocRef.current || !pdfCanvasRef.current) return;
+    renderTaskRef.current?.cancel();
+    const page = await pdfDocRef.current.getPage(pageNum);
+    const baseVp = page.getViewport({ scale: 1 });
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const displayW = (CANVAS_W * zoomVal) / 100;
+    // Render at display size × DPR: pixel-perfect on retina, no CSS upscaling ever
+    const scale = (displayW / baseVp.width) * dpr;
+    const viewport = page.getViewport({ scale });
+    const canvas = pdfCanvasRef.current;
+    canvas.width = viewport.width;    // native px = displayW * dpr
+    canvas.height = viewport.height;  // native px = displayH * dpr
+    canvas.style.width = `${displayW}px`;
+    canvas.style.height = `${viewport.height / dpr}px`;
+    setPdfPageCssHeight(viewport.height / dpr);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const task = page.render({ canvasContext: ctx, viewport });
+    renderTaskRef.current = task;
+    try {
+      await task.promise;
+    } catch {
+      // RenderingCancelledException — a newer render took over; safe to ignore
+    }
+  }, []);
+
+  // Immediate re-render on page change
+  useEffect(() => {
+    if (pdfLoaded) renderPage(currentPage, zoomRef.current);
+  }, [pdfLoaded, currentPage, renderPage]);
+
+  // Debounced re-render on zoom change (200 ms — avoids re-rendering on every increment)
+  useEffect(() => {
+    if (!pdfLoaded) return;
+    const timer = setTimeout(() => renderPage(currentPage, zoom), 200);
+    return () => clearTimeout(timer);
+  }, [zoom, pdfLoaded, currentPage, renderPage]);
+
+  /* ── Thumbnail rendering ────────────────────────────────────── */
+
+  const renderThumbnail = useCallback(async (pageNum: number) => {
+    if (!pdfDocRef.current) return;
+    const canvas = thumbnailRefs.current[pageNum];
+    if (!canvas) return;
+    const page = await pdfDocRef.current.getPage(pageNum);
+    const baseVp = page.getViewport({ scale: 1 });
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // Low scale (~0.5–0.8×) × DPR for sharp thumbnails at sidebar size
+    const scale = (THUMB_W / baseVp.width) * dpr;
+    const viewport = page.getViewport({ scale });
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    canvas.style.width = `${THUMB_W}px`;
+    canvas.style.height = `${viewport.height / dpr}px`;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    await page.render({ canvasContext: ctx, viewport }).promise;
+  }, []);
+
+  // Render all thumbnails after PDF loads
+  useEffect(() => {
+    if (!pdfLoaded || pageCount === 0) return;
+    for (let pg = 1; pg <= pageCount; pg++) {
+      renderThumbnail(pg);
+    }
+  }, [pdfLoaded, pageCount, renderThumbnail]);
+
+  /* ── PDF loading ────────────────────────────────────────────── */
+
+  const loadPdf = useCallback(
+    async (file: File) => {
+      const buffer = await file.arrayBuffer();
+      const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
+      pdfDocRef.current = doc;
+      onPdfLoaded(doc.numPages);
+    },
+    [onPdfLoaded]
+  );
+
+  const handleFileSelect = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) await loadPdf(file);
+      e.target.value = "";
+    },
+    [loadPdf]
+  );
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      const file = e.dataTransfer.files?.[0];
+      if (file?.type === "application/pdf") await loadPdf(file);
+    },
+    [loadPdf]
+  );
 
   /* Keyboard shortcuts */
   useEffect(() => {
@@ -79,6 +218,63 @@ export function DrawingViewer({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [snipMode, onToggleSnip, currentPage, pageCount, onPageChange]);
+
+  /* Combined native-DOM effect: wheel zoom + click-drag pan
+     Both need the scroll container, which only exists when pdfLoaded=true.
+     Native listeners bypass React event delegation, which doesn't reliably
+     receive pointer events after setPointerCapture is called.             */
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el || !pdfLoaded) return;
+
+    // ── Wheel: intercept ctrl+scroll / pinch before browser zoom ──
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        setZoom((z) => Math.max(25, Math.min(400, z + (e.deltaY < 0 ? 10 : -10))));
+      }
+    };
+
+    // ── Pan: click-drag to scroll ──
+    let ps: { x: number; y: number; sl: number; st: number } | null = null;
+
+    const onPanDown = (e: PointerEvent) => {
+      if (snipModeRef.current || e.button !== 0) return;
+      el.setPointerCapture(e.pointerId); // lock events to this element during drag
+      ps = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
+      setIsPanning(true);
+      e.preventDefault();
+    };
+
+    const onPanMove = (e: PointerEvent) => {
+      if (!ps) return;
+      el.scrollLeft = ps.sl - (e.clientX - ps.x);
+      el.scrollTop  = ps.st - (e.clientY - ps.y);
+    };
+
+    const onPanEnd = () => { ps = null; setIsPanning(false); };
+
+    el.addEventListener("wheel",         handleWheel, { passive: false });
+    el.addEventListener("pointerdown",   onPanDown);
+    el.addEventListener("pointermove",   onPanMove, { passive: true });
+    el.addEventListener("pointerup",     onPanEnd);
+    el.addEventListener("pointercancel", onPanEnd);
+
+    return () => {
+      el.removeEventListener("wheel",         handleWheel);
+      el.removeEventListener("pointerdown",   onPanDown);
+      el.removeEventListener("pointermove",   onPanMove);
+      el.removeEventListener("pointerup",     onPanEnd);
+      el.removeEventListener("pointercancel", onPanEnd);
+    };
+  }, [pdfLoaded]);
+
+  // Auto-fit to container width when PDF first loads
+  useEffect(() => {
+    if (!pdfLoaded || !scrollContainerRef.current) return;
+    const w = scrollContainerRef.current.clientWidth;
+    setZoom(Math.round(Math.min(400, Math.max(25, (w / CANVAS_W) * 100))));
+  }, [pdfLoaded]);
 
   /* Snip mouse handlers */
   const getCanvasPos = useCallback(
@@ -119,12 +315,36 @@ export function DrawingViewer({
     setIsDrawing(false);
     const rect = snipRectRef.current;
     if (rect && rect.width > 20 && rect.height > 20) {
-      onSnipComplete(rect);
+      let imageData = "";
+      const canvas = pdfCanvasRef.current;
+      if (canvas && canvas.width > 0 && canvas.height > 0) {
+        // Canvas native pixels = CSS pixels × DPR (set explicitly in renderPage)
+        const dpr = window.devicePixelRatio || 1;
+        const sx = Math.round(rect.x * dpr);
+        const sy = Math.round(rect.y * dpr);
+        const sw = Math.max(1, Math.round(rect.width * dpr));
+        const sh = Math.max(1, Math.round(rect.height * dpr));
+        const tmp = document.createElement("canvas");
+        tmp.width = sw;
+        tmp.height = sh;
+        tmp.getContext("2d")!.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+        imageData = tmp.toDataURL("image/png").split(",")[1] ?? "";
+      }
+      // Normalise from display-pixel space → zoom=100 space so overlay positions
+      // are correct regardless of which zoom level the snip was captured at
+      const z = zoom / 100;
+      const normBbox = {
+        x: rect.x / z,
+        y: rect.y / z,
+        width: rect.width / z,
+        height: rect.height / z,
+      };
+      onSnipComplete(normBbox, imageData);
     }
     snipRectRef.current = null;
     setSnipRect(null);
     startRef.current = null;
-  }, [onSnipComplete]);
+  }, [onSnipComplete, zoom]);
 
   /* Current page snippets */
   const pageSnippets = useMemo(
@@ -153,15 +373,18 @@ export function DrawingViewer({
           <button
             key={pg}
             onClick={() => onPageChange(pg)}
+            aria-current={pg === currentPage ? "page" : undefined}
             className={`relative rounded-lg border-2 p-1 transition-all ${
               pg === currentPage
                 ? "border-accent bg-red-50"
                 : "border-border bg-background hover:border-muted"
             }`}
           >
-            <div className="flex h-[72px] w-full items-center justify-center rounded bg-canvas text-[10px] font-mono text-muted-foreground">
-              {pg}
-            </div>
+            {/* DPR-aware thumbnail canvas */}
+            <canvas
+              ref={(el) => { thumbnailRefs.current[pg] = el; }}
+              style={{ width: `${THUMB_W}px`, display: "block", borderRadius: "4px" }}
+            />
             <span
               className={`mt-1 block text-center text-[10px] ${
                 pg === currentPage
@@ -362,81 +585,66 @@ export function DrawingViewer({
   const renderCanvas = () => {
     if (!pdfLoaded) {
       return (
-        <div
-          className="flex flex-1 cursor-pointer items-center justify-center bg-canvas"
-          onClick={onUpload}
-          role="button"
-          tabIndex={0}
-          aria-label="Upload PDF"
-          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onUpload()}
-        >
-          <div className="flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed border-border p-16 transition-colors hover:border-muted">
-            <Upload className="h-12 w-12 text-muted-foreground" />
-            <div className="text-center">
-              <p className="text-sm font-medium text-foreground">
-                Drop PDF here or click to upload
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Supports multi-page construction drawing sets
-              </p>
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf"
+            style={{ display: "none" }}
+            onChange={handleFileSelect}
+          />
+          <div
+            className="flex flex-1 cursor-pointer items-center justify-center bg-canvas"
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={handleDrop}
+            role="button"
+            tabIndex={0}
+            aria-label="Upload PDF"
+            onKeyDown={(e) =>
+              (e.key === "Enter" || e.key === " ") &&
+              fileInputRef.current?.click()
+            }
+          >
+            <div className="flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed border-border p-16 transition-colors hover:border-muted">
+              <Upload className="h-12 w-12 text-muted-foreground" />
+              <div className="text-center">
+                <p className="text-sm font-medium text-foreground">
+                  Drop PDF here or click to upload
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Supports multi-page construction drawing sets
+                </p>
+              </div>
             </div>
           </div>
-        </div>
+        </>
       );
     }
 
     return (
       <div
+        ref={scrollContainerRef}
         className="relative flex-1 overflow-auto bg-canvas"
-        onWheel={(e) => {
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault();
-            setZoom((z) =>
-              Math.max(25, Math.min(300, z + (e.deltaY < 0 ? 10 : -10)))
-            );
-          }
+        style={{
+          cursor: pdfLoaded && !snipMode
+            ? (isPanning ? "grabbing" : "grab")
+            : undefined,
         }}
       >
-        {/* Paper sheet on grey canvas */}
+        {/* Paper sheet — sized to match rendered PDF canvas */}
         <div
-          className="relative mx-auto my-8 bg-background shadow-lg"
+          className="relative mx-auto my-8 bg-background shadow-lg overflow-hidden"
           style={{
             width: `${(CANVAS_W * zoom) / 100}px`,
-            height: `${(CANVAS_H * zoom) / 100}px`,
-            transition: "width 0.2s, height 0.2s",
+            height: `${pdfPageCssHeight}px`,
+            transition: "width 0.2s",
           }}
         >
-          {/* Grid lines */}
-          <svg className="absolute inset-0 h-full w-full opacity-[0.06]">
-            <defs>
-              <pattern
-                id="grid"
-                width="40"
-                height="40"
-                patternUnits="userSpaceOnUse"
-              >
-                <path
-                  d="M 40 0 L 0 0 0 40"
-                  fill="none"
-                  stroke="#111827"
-                  strokeWidth="1"
-                />
-              </pattern>
-            </defs>
-            <rect width="100%" height="100%" fill="url(#grid)" />
-          </svg>
+          {/* PDF canvas — CSS size set explicitly in renderPage, never CSS-upscaled */}
+          <canvas ref={pdfCanvasRef} />
 
-          {/* Drawing label */}
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-            <span className="relative text-sm font-medium text-muted-foreground">
-              Drawing Page {currentPage}
-            </span>
-            <span className="relative text-[10px] text-muted-foreground">
-              E-{String(currentPage).padStart(3, "0")} Lighting Plan
-            </span>
-          </div>
-
-          {/* Snippet overlays */}
+          {/* Snippet overlays — positioned in zoom=100 space, scaled by zoom */}
           {pageSnippets.map((s) => (
             <div
               key={s.id}
@@ -465,7 +673,7 @@ export function DrawingViewer({
             active={snipMode}
             rect={snipRect}
             canvasWidth={(CANVAS_W * zoom) / 100}
-            canvasHeight={(CANVAS_H * zoom) / 100}
+            canvasHeight={pdfPageCssHeight}
             onMouseDown={onSnipMouseDown}
             onMouseMove={onSnipMouseMove}
             onMouseUp={onSnipMouseUp}
@@ -479,7 +687,7 @@ export function DrawingViewer({
 
   /* ── Render ─────────────────────────────────────────────────── */
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       {renderSidebar()}
       <div className="flex flex-1 flex-col overflow-hidden">
         {renderToolbar()}
