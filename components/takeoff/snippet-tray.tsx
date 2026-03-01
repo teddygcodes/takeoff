@@ -236,7 +236,7 @@ export function SnippetTray({
                                 </div>
 
                                 {/* Actions (on hover) */}
-                                <div className="flex gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                                <div className="flex gap-1 opacity-100 transition-opacity sm:opacity-30 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
                                   <button
                                     onClick={(e) => { e.stopPropagation(); startEdit(snippet); }}
                                     className="rounded p-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

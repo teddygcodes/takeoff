@@ -6,7 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint app components lib"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4",
@@ -24,6 +24,8 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.0.0",
     "typescript": "^5"
   }
 }

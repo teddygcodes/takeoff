@@ -76,8 +76,8 @@ def calculate_confidence(
     elif not fixture_counts:
         features["schedule_match_rate"] = 0.0
     else:
-        # No schedule available to match against — neutral
-        features["schedule_match_rate"] = 0.5
+        # No schedule available to match against — penalize; can't confirm counts
+        features["schedule_match_rate"] = 0.25
 
     # Feature 2: Area coverage
     # % of RCP snippets that have corresponding areas in the count.

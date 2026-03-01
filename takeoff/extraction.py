@@ -216,7 +216,7 @@ def _get_vision_client() -> 'anthropic.Anthropic':
     if _vision_client is None:
         with _vision_client_lock:
             if _vision_client is None:
-                api_key = os.getenv("ANTHROPIC_API_KEY", "")
+                api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
                 if not api_key:
                     raise RuntimeError(
                         "[TAKEOFF] FATAL: ANTHROPIC_API_KEY not set. "
@@ -344,90 +344,6 @@ def _call_vision_with_retry(
             else:
                 logger.error("[EXTRACTION] Vision call failed after %d attempts: %s", max_retries + 1, e)
     raise last_error
-
-
-def _simulate_vision_response(system_prompt: str, user_text: str) -> str:
-    """TEST ONLY: Simulated vision response for unit tests.
-    Never called automatically — only usable via explicit --simulate flag in CLI.
-    Do NOT call from production code paths."""
-    system_lower = system_prompt.lower()
-    user_lower = user_text.lower()
-
-    if "fixture schedule" in system_lower or "fixture schedule" in user_lower:
-        return json.dumps({
-            "fixtures": {
-                "A": {
-                    "description": "2x4 LED Recessed Troffer, 4000K, 3500 lumens",
-                    "manufacturer": "Acuity Lithonia",
-                    "catalog_number": "BLT4 40L ADP LP840",
-                    "voltage": "120-277V",
-                    "mounting": "Recessed",
-                    "dimming": "0-10V",
-                    "wattage": 38.0,
-                    "notes": "Standard office fixture"
-                },
-                "B": {
-                    "description": "4\" LED Recessed Downlight, 3000K",
-                    "manufacturer": "Lithonia Lighting",
-                    "catalog_number": "WF4 LED 30K 120",
-                    "voltage": "120V",
-                    "mounting": "Recessed",
-                    "dimming": "None",
-                    "wattage": 11.0,
-                    "notes": "Corridor and breakroom"
-                },
-                "C": {
-                    "description": "LED Exit Sign, green letters, battery backup",
-                    "manufacturer": "Sure-Lites",
-                    "catalog_number": "LP6N",
-                    "voltage": "120/277V",
-                    "mounting": "Wall or Ceiling",
-                    "dimming": "N/A",
-                    "wattage": 3.0,
-                    "notes": "Emergency egress — battery backup required"
-                }
-            },
-            "warnings": [],
-            "extraction_confidence": "high",
-            "raw_notes": "Mock schedule extraction"
-        })
-
-    if "reflected ceiling plan" in system_lower or "rcp" in system_lower or "count" in user_lower:
-        return json.dumps({
-            "area_label": "Mock Area",
-            "counts_by_type": {"A": 18, "B": 6},
-            "notes": ["All type A on standard circuit"],
-            "warnings": []
-        })
-
-    if "plan note" in system_lower or "specification" in system_lower:
-        return json.dumps({
-            "notes": [
-                {
-                    "text": "All corridor fixtures on emergency circuit",
-                    "affects_fixture_type": None,
-                    "constraint_type": "circuit"
-                },
-                {
-                    "text": "Provide occupancy sensor in each private office",
-                    "affects_fixture_type": "A",
-                    "constraint_type": "mounting"
-                }
-            ]
-        })
-
-    if "panel schedule" in system_lower or "circuit" in system_lower:
-        return json.dumps({
-            "panel_name": "LP-1",
-            "circuits": [
-                {"circuit": "1", "breaker_size": "20A", "load_va": 1200, "description": "Lighting - Floor 2 North"},
-                {"circuit": "3", "breaker_size": "20A", "load_va": 950, "description": "Lighting - Floor 2 South"}
-            ],
-            "total_load_va": 2150,
-            "warnings": []
-        })
-
-    return json.dumps({"error": "Unrecognized extraction request", "raw": ""})
 
 
 # ─── Extraction Functions ─────────────────────────────────────────────────────

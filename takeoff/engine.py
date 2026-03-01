@@ -446,7 +446,9 @@ class TakeoffEngine:
             rcp_images=_rcp_images,
         )
         checker_attacks = checker_response.data.get("attacks", [])
-        if not checker_response.data and checker_response.raw_response:
+        if checker_response.data.get("_model_failure"):
+            emit("WARNING: Checker model router failed — attacks may be incomplete")
+        elif not checker_response.data and checker_response.raw_response:
             emit("WARNING: Checker agent returned empty output — attacks may be missing")
         emit(f"Checker found {len(checker_attacks)} issues ({checker_response.data.get('critical_count', 0)} critical)")
 
@@ -561,7 +563,9 @@ class TakeoffEngine:
             rcp_images=_rcp_images,
         )
         checker_attacks = checker_response.data.get("attacks", [])
-        if not checker_response.data and checker_response.raw_response:
+        if checker_response.data.get("_model_failure"):
+            emit("WARNING: Checker model router failed — attacks may be incomplete")
+        elif not checker_response.data and checker_response.raw_response:
             emit("WARNING: Checker agent returned empty output — attacks may be missing")
         emit(f"Checker found {len(checker_attacks)} issues ({checker_response.data.get('critical_count', 0)} critical)")
 

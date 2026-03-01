@@ -48,7 +48,7 @@ function exportJSON(data: TakeoffResult) {
   setTimeout(() => URL.revokeObjectURL(url), 100);
 }
 
-function copyTable(data: TakeoffResult) {
+function buildTableText(data: TakeoffResult): string {
   const header = "TYPE\tDESCRIPTION\tCOUNT\tREVISED\tDIFF\tDIFFICULTY";
   const esc = (v: string | number) => String(v).replace(/\t/g, " ");
   const rows = data.fixture_counts.map(
@@ -56,9 +56,7 @@ function copyTable(data: TakeoffResult) {
       `${esc(f.type_tag)}\t${esc(f.description)}\t${f.total}\t${f.revised ?? f.total}\t${f.delta ? (f.delta > 0 ? "+" + f.delta : f.delta) : "—"}\t${esc(f.difficulty)}`
   );
   const total = `TOTAL\t\t${data.grand_total}\t${data.revised_total ?? data.grand_total}`;
-  navigator.clipboard.writeText([header, ...rows, total].join("\n")).catch((e) =>
-    console.error("Clipboard write failed", e)
-  );
+  return [header, ...rows, total].join("\n");
 }
 
 const VERDICT_STYLES: Record<string, { bg: string; border: string; text: string; icon: string; label: string }> = {
@@ -91,6 +89,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
   const [activeTab, setActiveTab] = useState<"counts" | "adversarial" | "confidence" | "export">("counts");
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -99,11 +98,17 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
     };
   }, []);
 
-  const handleCopy = useCallback(() => {
-    copyTable(data);
-    setCopied(true);
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(buildTableText(data));
+      setCopied(true);
+      setCopyError(false);
+    } catch {
+      setCopyError(true);
+      setCopied(false);
+    }
     if (copyTimeoutRef.current !== null) clearTimeout(copyTimeoutRef.current);
-    copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
+    copyTimeoutRef.current = setTimeout(() => { setCopied(false); setCopyError(false); }, 2000);
   }, [data]);
 
   if (data.error) {
@@ -175,6 +180,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
             key={tab.key}
             role="tab"
             aria-selected={activeTab === tab.key}
+            tabIndex={activeTab === tab.key ? 0 : -1}
             onClick={() => setActiveTab(tab.key)}
             className={`px-4 py-2.5 text-sm transition-colors ${
               activeTab === tab.key
@@ -460,7 +466,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
                           {displayNames[feature] || feature.replace(/_/g, " ")}
                         </span>
                         <span className="font-mono text-xs font-semibold" style={{ color: barColor }}>
-                          {pct >= 0 ? `${pct}%` : numVal === 1 ? "Clean \u2713" : `${pct}%`}
+                          {numVal === 1 ? "Clean \u2713" : `${pct}%`}
                         </span>
                       </div>
                       <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
@@ -521,7 +527,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
                 className="flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                {copied ? "Copied!" : "Copy to Clipboard"}
+                {copied ? "Copied!" : copyError ? "Copy failed" : "Copy to Clipboard"}
               </button>
             </div>
 

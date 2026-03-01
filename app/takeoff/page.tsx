@@ -139,7 +139,7 @@ export default function TakeoffPage() {
           setIsRunning(false);
           setPipelineStatus("Cancelled");
         } else {
-          setError((err instanceof Error ? err.message : null) || "Something went wrong");
+          setError((err instanceof Error ? err.message : String(err)) || "Something went wrong");
           setIsRunning(false);
           setPipelineStatus("");
         }

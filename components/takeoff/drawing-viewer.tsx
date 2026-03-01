@@ -188,6 +188,7 @@ export function DrawingViewer({
       <button
         onClick={onToggleSnip}
         disabled={!pdfLoaded || pipelineRunning}
+        title={!pdfLoaded ? "Upload a PDF first" : pipelineRunning ? "Cannot snip while pipeline is running" : undefined}
         className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 ${
           snipMode
             ? "bg-accent text-white"
@@ -203,6 +204,7 @@ export function DrawingViewer({
       <button
         onClick={fitPage}
         disabled={!pdfLoaded}
+        title={!pdfLoaded ? "Upload a PDF first" : undefined}
         className="rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-canvas hover:text-foreground disabled:opacity-40"
       >
         <Maximize2 className="inline h-3 w-3 mr-1" />
@@ -211,6 +213,7 @@ export function DrawingViewer({
       <button
         onClick={fitWidth}
         disabled={!pdfLoaded}
+        title={!pdfLoaded ? "Upload a PDF first" : undefined}
         className="rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-canvas hover:text-foreground disabled:opacity-40"
       >
         Width
@@ -219,6 +222,7 @@ export function DrawingViewer({
       <button
         onClick={zoomOut}
         disabled={!pdfLoaded}
+        title={!pdfLoaded ? "Upload a PDF first" : undefined}
         className="rounded-md p-1.5 text-muted-foreground hover:bg-canvas hover:text-foreground disabled:opacity-40"
       >
         <ZoomOut className="h-3.5 w-3.5" />
@@ -229,6 +233,7 @@ export function DrawingViewer({
       <button
         onClick={zoomIn}
         disabled={!pdfLoaded}
+        title={!pdfLoaded ? "Upload a PDF first" : undefined}
         className="rounded-md p-1.5 text-muted-foreground hover:bg-canvas hover:text-foreground disabled:opacity-40"
       >
         <ZoomIn className="h-3.5 w-3.5" />
