@@ -49,6 +49,7 @@ export function DrawingViewer({
 }: DrawingViewerProps) {
   const [zoom, setZoom] = useState(100);
   const [snipRect, setSnipRect] = useState<SnipRect | null>(null);
+  const snipRectRef = useRef<SnipRect | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const startRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -102,24 +103,28 @@ export function DrawingViewer({
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!isDrawing || !startRef.current) return;
       const pos = getCanvasPos(e);
-      setSnipRect({
+      const rect = {
         x: Math.min(startRef.current.x, pos.x),
         y: Math.min(startRef.current.y, pos.y),
         width: Math.abs(pos.x - startRef.current.x),
         height: Math.abs(pos.y - startRef.current.y),
-      });
+      };
+      snipRectRef.current = rect;
+      setSnipRect(rect);
     },
     [isDrawing, getCanvasPos]
   );
 
   const onSnipMouseUp = useCallback(() => {
     setIsDrawing(false);
-    if (snipRect && snipRect.width > 20 && snipRect.height > 20) {
-      onSnipComplete(snipRect);
+    const rect = snipRectRef.current;
+    if (rect && rect.width > 20 && rect.height > 20) {
+      onSnipComplete(rect);
     }
+    snipRectRef.current = null;
     setSnipRect(null);
     startRef.current = null;
-  }, [snipRect, onSnipComplete]);
+  }, [onSnipComplete]);
 
   /* Current page snippets */
   const pageSnippets = useMemo(

@@ -110,7 +110,7 @@ class TakeoffEngine:
                     status_callback(message)
                 except Exception as _cb_err:
                     logger.warning("[TAKEOFF] status_callback raised: %s", _cb_err, exc_info=True)
-            print(f"[TAKEOFF] {message}")
+            logger.info("[TAKEOFF] %s", message)
 
         # Generate job ID
         job_id = str(uuid.uuid4())[:8]
@@ -696,7 +696,7 @@ class TakeoffEngine:
     ) -> Dict:
         """Build the final result dict for API/CLI consumers."""
         # Use reconciler's revised counts if available
-        if reconciler_output and reconciler_output.get("revised_grand_total"):
+        if reconciler_output and "revised_grand_total" in reconciler_output:
             grand_total = reconciler_output["revised_grand_total"]
             revised_counts = reconciler_output.get("revised_fixture_counts", {})
         else:

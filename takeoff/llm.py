@@ -203,7 +203,7 @@ class LLMProvider:
                     continue
                 raise LLMTimeoutException(f"API timeout after {max_retries} retries")
 
-            except Exception as e:
+            except (anthropic.APIError, OSError, TimeoutError) as e:
                 if attempt < max_retries - 1:
                     logger.warning("[LLM] Error: %s, retrying (attempt %d/%d)", e, attempt + 1, max_retries)
                     time.sleep(1)

@@ -148,6 +148,7 @@ export function SnippetTray({
                   <button
                     onClick={() => toggleSection(labelKey)}
                     className="flex w-full items-center gap-2 px-1 py-1.5 text-left"
+                    aria-expanded={!collapsed}
                   >
                     <span className="text-xs text-muted-foreground">
                       {collapsed ? "\u25B6" : "\u25BC"}
@@ -173,7 +174,7 @@ export function SnippetTray({
                               <div className="p-3">
                                 <select
                                   value={editLabel}
-                                  onChange={(e) => setEditLabel(e.target.value)}
+                                  onChange={(e) => { if (LABEL_OPTIONS.some((o) => o.value === e.target.value)) setEditLabel(e.target.value); }}
                                   className="mb-2 w-full rounded-md border border-border bg-background px-2 py-1.5 font-sans text-xs text-foreground"
                                 >
                                   {LABEL_OPTIONS.map((opt) => (
@@ -235,7 +236,7 @@ export function SnippetTray({
                                 </div>
 
                                 {/* Actions (on hover) */}
-                                <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                                <div className="flex gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
                                   <button
                                     onClick={(e) => { e.stopPropagation(); startEdit(snippet); }}
                                     className="rounded p-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -281,7 +282,7 @@ export function SnippetTray({
             <select
               id="mode-select"
               value={mode}
-              onChange={(e) => setMode(e.target.value)}
+              onChange={(e) => { if (e.target.value in MODE_INFO) setMode(e.target.value); }}
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
             >
               {Object.entries(MODE_INFO).map(([key, info]) => (

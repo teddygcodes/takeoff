@@ -150,7 +150,7 @@ Produce the complete fixture count. Aggregate all per-area counts, assign diffic
                 max_tokens=4000
             )
         except Exception as e:
-            print(f"[COUNTER] ERROR: Model router failed: {e}")
+            logger.error("[COUNTER] ERROR: Model router failed: %s", e)
             return TakeoffResponse(agent_role="counter", data={"_model_failure": True}, raw_response=f"[MODEL ERROR: {e}]", parse_error=True)
 
         try:
@@ -160,7 +160,7 @@ Produce the complete fixture count. Aggregate all per-area counts, assign diffic
                 # Treat missing fixture_counts as a parse failure so the engine returns
                 # "agent_parse_error" instead of the misleading "blank_drawing" short-circuit
                 return TakeoffResponse(agent_role="counter", data=data, raw_response=response.content, parse_error=True)
-            print(f"[COUNTER] {len(data.get('fixture_counts', []))} fixture types, {data.get('grand_total_fixtures', 0)} total fixtures")
+            logger.info("[COUNTER] %d fixture types, %d total fixtures", len(data.get('fixture_counts', [])), data.get('grand_total_fixtures', 0))
             return TakeoffResponse(
                 agent_role="counter",
                 data=data,
@@ -168,7 +168,7 @@ Produce the complete fixture count. Aggregate all per-area counts, assign diffic
                 reasoning=data.get("reasoning")
             )
         except (json.JSONDecodeError, ValueError) as e:
-            print(f"[COUNTER] ERROR: Failed to parse JSON response: {e}")
+            logger.error("[COUNTER] ERROR: Failed to parse JSON response: %s", e)
             return TakeoffResponse(agent_role="counter", data={}, raw_response=response.content, parse_error=True)
 
 
@@ -458,7 +458,7 @@ Return JSON ONLY — no explanatory text:
                 max_tokens=3000
             )
         except Exception as e:
-            print(f"[CHECKER] ERROR: Model router failed: {e}")
+            logger.error("[CHECKER] ERROR: Model router failed: %s", e)
             # Still return any vision attacks even if text LLM fails
             if vision_attacks:
                 return TakeoffResponse(
@@ -515,7 +515,7 @@ Return JSON ONLY — no explanatory text:
                 reasoning=data.get("summary")
             )
         except (json.JSONDecodeError, ValueError) as e:
-            print(f"[CHECKER] ERROR: Failed to parse JSON response: {e}")
+            logger.error("[CHECKER] ERROR: Failed to parse JSON response: %s", e)
             return TakeoffResponse(agent_role="checker", data={"attacks": []}, raw_response=response.content, parse_error=True)
 
 
@@ -630,7 +630,7 @@ Address each attack and provide revised counts. For each plan note constraint, e
                 max_tokens=3000
             )
         except Exception as e:
-            print(f"[RECONCILER] ERROR: Model router failed: {e}")
+            logger.error("[RECONCILER] ERROR: Model router failed: %s", e)
             return TakeoffResponse(agent_role="reconciler", data={}, raw_response=f"[MODEL ERROR: {e}]")
 
         try:
@@ -661,7 +661,7 @@ Address each attack and provide revised counts. For each plan note constraint, e
                         resp["revised_count"] = None
 
             concessions = sum(1 for r in data.get("responses", []) if r.get("verdict") == "concede")
-            print(f"[RECONCILER] {len(data.get('responses', []))} responses ({concessions} concessions), revised total: {data.get('revised_grand_total', 'unknown')}")
+            logger.info("[RECONCILER] %d responses (%d concessions), revised total: %s", len(data.get('responses', [])), concessions, data.get('revised_grand_total', 'unknown'))
             return TakeoffResponse(
                 agent_role="reconciler",
                 data=data,
@@ -669,7 +669,7 @@ Address each attack and provide revised counts. For each plan note constraint, e
                 reasoning=data.get("reasoning")
             )
         except (json.JSONDecodeError, ValueError) as e:
-            print(f"[RECONCILER] ERROR: Failed to parse JSON response: {e}")
+            logger.error("[RECONCILER] ERROR: Failed to parse JSON response: %s", e)
             return TakeoffResponse(agent_role="reconciler", data={}, raw_response=response.content, parse_error=True)
 
 

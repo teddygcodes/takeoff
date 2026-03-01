@@ -422,7 +422,7 @@ class TakeoffDB:
                 try:
                     cur.execute("ROLLBACK")
                 except Exception:
-                    pass  # Already rolled back or BEGIN never succeeded
+                    logger.error("[SCHEMA] ROLLBACK failed", exc_info=True)
                 raise
 
     def get_full_result(self, job_id: str) -> Optional[Dict]:

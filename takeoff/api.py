@@ -61,32 +61,32 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
     global engine
 
-    print("[TAKEOFF API] Starting up...")
+    logger.info("[TAKEOFF API] Starting up...")
 
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
 
     # Verify Anthropic API key using the shared helper
     try:
         verify_api_key(anthropic_key or "")
-        print("[TAKEOFF API] ✓ Anthropic API key verified")
+        logger.info("[TAKEOFF API] Anthropic API key verified")
     except Exception as e:
         raise RuntimeError(f"Anthropic API verification failed: {e}")
 
     # Initialize engine
     try:
         engine = TakeoffEngine(db_path="takeoff_api.db")
-        print("[TAKEOFF API] ✓ Takeoff engine initialized")
+        logger.info("[TAKEOFF API] Takeoff engine initialized")
     except Exception as e:
         raise RuntimeError(f"Failed to initialize Takeoff engine: {e}")
 
-    print("[TAKEOFF API] 🚀 Server ready")
+    logger.info("[TAKEOFF API] Server ready")
 
     yield
 
-    print("[TAKEOFF API] Shutting down...")
+    logger.info("[TAKEOFF API] Shutting down...")
     if engine and engine.db:
         engine.db.close()
-        print("[TAKEOFF API] ✓ Database connection closed")
+        logger.info("[TAKEOFF API] Database connection closed")
 
 
 # ─── FastAPI App ──────────────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ async def generate_takeoff_stream(request: TakeoffRequest) -> AsyncGenerator[str
         try:
             status_queue.put_nowait({"type": "status", "message": message})
         except queue.Full:
-            print(f"[TAKEOFF API] WARNING: Status queue full, dropping message: {message[:80]}")
+            logger.warning("[TAKEOFF API] Status queue full, dropping message: %s", message[:80])
 
     def run_job():
         try:

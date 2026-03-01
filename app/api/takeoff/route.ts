@@ -17,11 +17,41 @@
 
 import { NextRequest } from "next/server";
 
-const TAKEOFF_API_URL =
-  process.env.TAKEOFF_API_URL || "http://localhost:8001";
+const TAKEOFF_API_URL = (() => {
+  const raw = process.env.TAKEOFF_API_URL || "http://localhost:8001";
+  try {
+    new URL(raw);
+  } catch {
+    throw new Error(`TAKEOFF_API_URL is not a valid URL: "${raw}"`);
+  }
+  return raw;
+})();
+
+const VALID_MODES = new Set(["fast", "strict", "liability"]);
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return new Response(
+      `data: ${JSON.stringify({ type: "error", message: "Invalid JSON in request body" })}\n\n`,
+      { status: 400, headers: { "Content-Type": "text/event-stream" } }
+    );
+  }
+
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    !Array.isArray((body as Record<string, unknown>).snippets) ||
+    typeof (body as Record<string, unknown>).mode !== "string" ||
+    !VALID_MODES.has((body as Record<string, unknown>).mode as string)
+  ) {
+    return new Response(
+      `data: ${JSON.stringify({ type: "error", message: "Request must include snippets (array) and mode (fast|strict|liability)" })}\n\n`,
+      { status: 400, headers: { "Content-Type": "text/event-stream" } }
+    );
+  }
 
   // "duplex: half" is required by Node.js fetch when sending a body while streaming
   // the response. Not part of the standard RequestInit type, hence the cast.

@@ -334,7 +334,7 @@ def _call_vision_with_retry(
     for attempt in range(max_retries + 1):
         try:
             return _call_vision(client, system_prompt, user_text, image_base64, max_tokens, temperature, model)
-        except Exception as e:
+        except _EXTRACTION_ERRORS as e:
             last_error = e
             if attempt < max_retries:
                 delay = (2 ** (attempt + 1)) + random.uniform(0, 1)
@@ -574,7 +574,7 @@ Return ONLY valid JSON:
             warnings=data.get("warnings", [])
         )
 
-        total = sum(area_count.counts_by_type.values())
+        total = sum(v for v in area_count.counts_by_type.values() if isinstance(v, (int, float)))
         logger.info("[EXTRACTION] RCP '%s': %d fixtures across %d types", area_label, total, len(area_count.counts_by_type))
         return area_count
 

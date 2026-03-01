@@ -76,6 +76,7 @@ const RESOLUTION_STYLES: Record<string, { text: string; label: string }> = {
   CONCEDED: { text: "text-green-600", label: "CONCEDED \u2713" },
   DEFENDED: { text: "text-muted-foreground", label: "DEFENDED \u2717" },
   PARTIAL: { text: "text-amber-600", label: "PARTIAL ~" },
+  unknown: { text: "text-muted-foreground", label: "UNKNOWN" },
 };
 
 const DIFF_LABELS: Record<string, string> = {
@@ -322,7 +323,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
             ) : (
               data.adversarial_log.map((entry, i) => {
                 const sev = SEVERITY_STYLES[entry.severity] || SEVERITY_STYLES.minor;
-                const res = RESOLUTION_STYLES[entry.resolution || ""] || { text: "text-muted-foreground", label: entry.resolution };
+                const res = RESOLUTION_STYLES[entry.resolution || ""] || { text: "text-muted-foreground", label: entry.resolution ?? "unknown" };
 
                 return (
                   <div
