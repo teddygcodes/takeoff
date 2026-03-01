@@ -109,7 +109,7 @@ class TakeoffEngine:
                 try:
                     status_callback(message)
                 except Exception as _cb_err:
-                    print(f"[TAKEOFF] WARNING: status_callback raised: {_cb_err}")
+                    logger.warning("[TAKEOFF] status_callback raised: %s", _cb_err, exc_info=True)
             print(f"[TAKEOFF] {message}")
 
         # Generate job ID
@@ -570,6 +570,24 @@ class TakeoffEngine:
         original_total = counter_output.get("grand_total_fixtures", 0)
         revised_total = reconciler_output.get("revised_grand_total", original_total)
         emit(f"Reconciler: revised total = {revised_total}")
+
+        # Arithmetic cross-check: recompute Reconciler's grand total from its per-type sums.
+        # If they disagree by >2%, use the computed sum so a hallucinated total doesn't propagate.
+        _recon_counts = reconciler_output.get("revised_fixture_counts", {})
+        if _recon_counts:
+            _recon_computed = sum(
+                v.get("total", 0) if isinstance(v, dict) else 0
+                for v in _recon_counts.values()
+            )
+            if _recon_computed > 0 and abs(_recon_computed - revised_total) > max(2, int(_recon_computed * 0.02)):
+                logger.warning(
+                    "[ENGINE] Reconciler revised_grand_total=%d disagrees with per-type sum=%d — using computed sum",
+                    revised_total, _recon_computed
+                )
+                emit(f"WARNING: Reconciler's revised_grand_total={revised_total} disagrees with per-type sum={_recon_computed} — using computed sum")
+                reconciler_output = dict(reconciler_output)
+                reconciler_output["revised_grand_total"] = _recon_computed
+                revised_total = _recon_computed
 
         # I6: Guardrail — flag if Reconciler's revised total deviates >20% from Counter's original
         if original_total > 0 and revised_total > 0:

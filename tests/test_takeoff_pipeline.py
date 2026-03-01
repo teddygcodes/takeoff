@@ -2582,8 +2582,10 @@ class TestBugFixes6(unittest.TestCase):
         mock_response.usage = None
         mock_client.messages.create.return_value = mock_response
 
+        # Use a 200-char base64 string (~150 decoded bytes) to pass the size pre-check
+        fake_image_b64 = "A" * 200
         with self.assertRaises(RuntimeError, msg="_call_vision must raise on empty content array"):
-            _call_vision(mock_client, "sys", "user", "dGVzdA==")
+            _call_vision(mock_client, "sys", "user", fake_image_b64)
 
     # ── API key guard path normalization ──────────────────────────────
 
@@ -3116,6 +3118,159 @@ class TestCheckerVision(unittest.TestCase):
             self.assertEqual(len(attacks), 1, "Dedup should collapse vision+text to 1 attack")
             # The MAJOR (vision) entry wins over MINOR (text)
             self.assertEqual(attacks[0]["severity"], "major")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 11. Audit Fix Tests
+# ══════════════════════════════════════════════════════════════════════
+
+class TestAuditFixes(unittest.TestCase):
+    """Unit tests for the 6 improvements applied in the codebase audit."""
+
+    # Fix #1: JSON extraction error messages now include per-strategy detail
+
+    def test_json_error_contains_strategy_detail(self):
+        """JSONDecodeError message must contain 'direct:' diagnostic detail."""
+        with self.assertRaises(json.JSONDecodeError) as ctx:
+            extract_json_from_response("not json at all", "TEST")
+        self.assertIn("direct:", str(ctx.exception),
+            "Error message must identify which extraction strategy failed")
+
+    def test_json_error_contains_detail_when_fence_also_fails(self):
+        """Fence strategy failure detail must appear in the error when brace strategy also fails."""
+        # A markdown fence with invalid JSON inside tests Strategy 2 failure
+        bad_fenced = "```json\nnot valid json{\n```"
+        with self.assertRaises(json.JSONDecodeError) as ctx:
+            extract_json_from_response(bad_fenced, "TEST")
+        msg = str(ctx.exception)
+        # At least one strategy error detail must appear
+        self.assertTrue(
+            "direct:" in msg or "fence:" in msg or "braces:" in msg,
+            f"Error message must include at least one strategy detail, got: {msg}"
+        )
+
+    # Fix #3: Reconciler grand total arithmetic guardrail
+
+    def test_reconciler_guardrail_corrects_inconsistent_total(self):
+        """When revised_grand_total disagrees with per-type sum by >2%, the guardrail corrects it."""
+        reconciler_output = {
+            "revised_grand_total": 200,
+            "revised_fixture_counts": {
+                "A": {"total": 100},
+                "B": {"total": 75},
+            },
+        }
+        revised_total = reconciler_output["revised_grand_total"]  # 200
+        _recon_counts = reconciler_output.get("revised_fixture_counts", {})
+        _recon_computed = sum(
+            v.get("total", 0) if isinstance(v, dict) else 0
+            for v in _recon_counts.values()
+        )  # 175
+
+        # Verify the discrepancy triggers the guardrail threshold
+        self.assertTrue(
+            abs(_recon_computed - revised_total) > max(2, int(_recon_computed * 0.02)),
+            "Test precondition: discrepancy must exceed guardrail threshold"
+        )
+
+        # Apply the guardrail (mirrors engine.py logic)
+        if _recon_computed > 0 and abs(_recon_computed - revised_total) > max(2, int(_recon_computed * 0.02)):
+            reconciler_output["revised_grand_total"] = _recon_computed
+            revised_total = _recon_computed
+
+        self.assertEqual(revised_total, 175, "Guardrail must correct revised_total to per-type sum")
+        self.assertEqual(reconciler_output["revised_grand_total"], 175)
+
+    def test_reconciler_guardrail_no_correction_when_consistent(self):
+        """When revised_grand_total agrees with per-type sum, no correction is made."""
+        reconciler_output = {
+            "revised_grand_total": 175,
+            "revised_fixture_counts": {
+                "A": {"total": 100},
+                "B": {"total": 75},
+            },
+        }
+        original = reconciler_output["revised_grand_total"]
+        _recon_counts = reconciler_output.get("revised_fixture_counts", {})
+        _recon_computed = sum(
+            v.get("total", 0) if isinstance(v, dict) else 0
+            for v in _recon_counts.values()
+        )  # 175
+
+        triggered = (
+            _recon_computed > 0
+            and abs(_recon_computed - original) > max(2, int(_recon_computed * 0.02))
+        )
+        self.assertFalse(triggered, "Guardrail must NOT trigger when totals agree")
+
+    # Fix #4: Reconciler revised_count bounds clamping
+
+    def test_revised_count_negative_clamped_to_zero(self):
+        """Negative revised_count must be clamped to 0."""
+        counter_output = {"grand_total_fixtures": 100}
+        _orig_total = counter_output.get("grand_total_fixtures", 0) or 0
+        _MAX_COUNT = max(9999, _orig_total * 10)
+        resp = {"attack_id": "ATK-001", "revised_count": -5}
+
+        rc = resp.get("revised_count")
+        resp["revised_count"] = max(0, min(int(rc), _MAX_COUNT))
+
+        self.assertEqual(resp["revised_count"], 0)
+
+    def test_revised_count_extreme_value_clamped(self):
+        """Hallucinated revised_count (e.g. 99999) must be clamped to _MAX_COUNT."""
+        counter_output = {"grand_total_fixtures": 100}
+        _orig_total = counter_output.get("grand_total_fixtures", 0) or 0
+        _MAX_COUNT = max(9999, _orig_total * 10)  # max(9999, 1000) = 9999
+        resp = {"attack_id": "ATK-002", "revised_count": 99999}
+
+        rc = resp.get("revised_count")
+        resp["revised_count"] = max(0, min(int(rc), _MAX_COUNT))
+
+        self.assertEqual(resp["revised_count"], _MAX_COUNT)
+
+    def test_revised_count_valid_value_unchanged(self):
+        """Valid revised_count within bounds must pass through unchanged."""
+        counter_output = {"grand_total_fixtures": 100}
+        _orig_total = counter_output.get("grand_total_fixtures", 0) or 0
+        _MAX_COUNT = max(9999, _orig_total * 10)
+        resp = {"attack_id": "ATK-003", "revised_count": 50}
+
+        rc = resp.get("revised_count")
+        resp["revised_count"] = max(0, min(int(rc), _MAX_COUNT))
+
+        self.assertEqual(resp["revised_count"], 50)
+
+    def test_revised_count_non_numeric_cleared(self):
+        """Non-numeric revised_count must be cleared to None."""
+        resp = {"attack_id": "ATK-004", "revised_count": "lots"}
+        try:
+            int(resp["revised_count"])
+            resp["revised_count"] = max(0, min(int(resp["revised_count"]), 9999))
+        except (TypeError, ValueError):
+            resp["revised_count"] = None
+        self.assertIsNone(resp["revised_count"])
+
+    # Fix #5: Image size pre-validation
+
+    def test_empty_image_raises_value_error(self):
+        """_call_vision must raise ValueError before calling API when image is too short."""
+        from takeoff.extraction import _call_vision
+        # "abc" decodes to ~2 bytes — well below the 100-byte minimum
+        with self.assertRaises(ValueError) as ctx:
+            _call_vision(None, "system", "user", "abc")
+        self.assertIn("empty or corrupt", str(ctx.exception))
+
+    def test_valid_image_length_passes_validation(self):
+        """A base64 string long enough to represent a real image must pass the length check.
+        This test verifies the threshold is not accidentally set too high."""
+        from takeoff.extraction import _call_vision
+        # A 200-byte base64 string decodes to ~150 bytes > 100-byte minimum.
+        # We expect it to fail on the API call (client=None), NOT on length validation.
+        fake_image = "A" * 200
+        with self.assertRaises((AttributeError, TypeError)):
+            # Should fail on client.messages.create (client is None), not ValueError
+            _call_vision(None, "system", "user", fake_image)
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -133,20 +133,21 @@ def extract_json_from_response(response_text: str, agent_name: str = "Extractor"
     Mirrors sydyn/agents.py extract_json_from_response exactly.
     """
     logger.debug("[%s] Raw response preview: %s...", agent_name, response_text[:500])
+    _errors = []
 
     # Strategy 1: Direct parse
     try:
         return json.loads(response_text)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as _e1:
+        _errors.append(f"direct: {_e1}")
 
     # Strategy 2: Extract from markdown code fences
     fence_match = re.search(r'```(?:json)?\s*(.*?)\s*```', response_text, re.DOTALL)
     if fence_match:
         try:
             return json.loads(fence_match.group(1))
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as _e2:
+            _errors.append(f"fence: {_e2}")
 
     # Strategy 3: Extract from first { to last }
     first_brace = response_text.find('{')
@@ -154,11 +155,12 @@ def extract_json_from_response(response_text: str, agent_name: str = "Extractor"
     if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
         try:
             return json.loads(response_text[first_brace:last_brace + 1])
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as _e3:
+            _errors.append(f"braces: {_e3}")
 
-    logger.warning("[%s] ERROR: Failed to extract valid JSON", agent_name)
-    raise json.JSONDecodeError("Could not extract valid JSON", response_text, 0)
+    detail = "; ".join(_errors) or "no JSON structure found"
+    logger.warning("[%s] ERROR: Failed to extract valid JSON. Strategies: %s", agent_name, detail)
+    raise json.JSONDecodeError(f"Could not extract valid JSON ({detail})", response_text, 0)
 
 
 # ─── Vision Client ───────────────────────────────────────────────────────────
@@ -242,6 +244,15 @@ def _call_vision(
         elif _mime == "image/gif":
             detected_media_type = "image/gif"
         # else: falls through to default "image/png"
+
+    # Validate image has plausible content before sending to API.
+    # An empty or near-empty base64 string indicates a capture failure.
+    _estimated_bytes = len(image_base64) * 3 // 4
+    if _estimated_bytes < 100:
+        raise ValueError(
+            f"[EXTRACTION] image_base64 appears empty or corrupt "
+            f"(~{_estimated_bytes} decoded bytes) — check that the snippet image was captured correctly"
+        )
 
     response = client.messages.create(
         model=model,
@@ -461,8 +472,8 @@ Return ONLY valid JSON (no markdown fences):
         logger.info("[EXTRACTION] Fixture schedule: %d types extracted", len(fixtures_raw))
         return fixture_schedule
 
-    except Exception as e:
-        logger.error("[EXTRACTION] ERROR extracting fixture schedule: %s", e)
+    except (RuntimeError, json.JSONDecodeError, ValueError, OSError, TimeoutError) as e:
+        logger.error("[EXTRACTION] ERROR extracting fixture schedule: %s", e, exc_info=True)
         return FixtureSchedule(warnings=[f"Extraction failed: {str(e)}"])
 
 
@@ -538,8 +549,8 @@ Return ONLY valid JSON:
         logger.info("[EXTRACTION] RCP '%s': %d fixtures across %d types", area_label, total, len(area_count.counts_by_type))
         return area_count
 
-    except Exception as e:
-        logger.error("[EXTRACTION] ERROR extracting RCP counts for '%s': %s", area_label, e)
+    except (RuntimeError, json.JSONDecodeError, ValueError, OSError, TimeoutError) as e:
+        logger.error("[EXTRACTION] ERROR extracting RCP counts for '%s': %s", area_label, e, exc_info=True)
         return AreaCount(area_label=area_label, warnings=[f"Extraction failed: {str(e)}"])
 
 
@@ -595,8 +606,8 @@ Return ONLY valid JSON:
         logger.info("[EXTRACTION] Plan notes: %d constraints extracted", len(notes))
         return notes
 
-    except Exception as e:
-        logger.error("[EXTRACTION] ERROR extracting plan notes: %s", e)
+    except (RuntimeError, json.JSONDecodeError, ValueError, OSError, TimeoutError) as e:
+        logger.error("[EXTRACTION] ERROR extracting plan notes: %s", e, exc_info=True)
         return []
 
 
@@ -654,6 +665,6 @@ Return ONLY valid JSON:
         logger.info("[EXTRACTION] Panel '%s': %d circuits, %s VA total", panel.panel_name, len(panel.circuits), panel.total_load_va)
         return panel
 
-    except Exception as e:
-        logger.error("[EXTRACTION] ERROR extracting panel schedule: %s", e)
+    except (RuntimeError, json.JSONDecodeError, ValueError, OSError, TimeoutError) as e:
+        logger.error("[EXTRACTION] ERROR extracting panel schedule: %s", e, exc_info=True)
         return PanelData(warnings=[f"Extraction failed: {str(e)}"])

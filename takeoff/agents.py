@@ -628,6 +628,29 @@ Address each attack and provide revised counts. For each plan note constraint, e
             data = extract_json_from_response(response.content, "RECONCILER")
             if "responses" not in data:
                 logger.warning("[RECONCILER] WARNING: Response missing 'responses' key — got keys: %s", list(data.keys()))
+
+            # Clamp revised_count per response to sane bounds to prevent hallucinated
+            # counts from corrupting the audit trail.
+            _orig_total = counter_output.get("grand_total_fixtures", 0) or 0
+            _MAX_COUNT = max(9999, _orig_total * 10)
+            for resp in data.get("responses", []):
+                rc = resp.get("revised_count")
+                if rc is not None:
+                    try:
+                        rc_int = int(rc)
+                        if rc_int < 0 or rc_int > _MAX_COUNT:
+                            logger.warning(
+                                "[RECONCILER] Clamping revised_count %d to [0, %d] for attack %s",
+                                rc_int, _MAX_COUNT, resp.get("attack_id", "?")
+                            )
+                        resp["revised_count"] = max(0, min(rc_int, _MAX_COUNT))
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "[RECONCILER] Non-numeric revised_count %r for attack %s — clearing",
+                            rc, resp.get("attack_id", "?")
+                        )
+                        resp["revised_count"] = None
+
             concessions = sum(1 for r in data.get("responses", []) if r.get("verdict") == "concede")
             print(f"[RECONCILER] {len(data.get('responses', []))} responses ({concessions} concessions), revised total: {data.get('revised_grand_total', 'unknown')}")
             return TakeoffResponse(
