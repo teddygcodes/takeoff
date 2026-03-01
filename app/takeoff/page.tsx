@@ -5,6 +5,7 @@ import Link from "next/link";
 import { DrawingViewer, type SnippetData } from "@/components/takeoff/drawing-viewer";
 import { SnippetTray } from "@/components/takeoff/snippet-tray";
 import { ResultsPanel, type TakeoffResultData } from "@/components/takeoff/results-panel";
+import type { SnippetLabel } from "@/lib/types";
 
 type PanelMode = "workspace" | "results";
 
@@ -17,6 +18,12 @@ export default function TakeoffPage() {
   const [panelMode, setPanelMode] = useState<PanelMode>("workspace");
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // DrawingViewer controlled state
+  const [pageCount, setPageCount] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [snipMode, setSnipMode] = useState(false);
+  const [pdfLoaded, setPdfLoaded] = useState(false);
 
   // ── Snippet management ──────────────────────────────────────────────
   const handleSnippetCaptured = useCallback((snippet: SnippetData) => {
@@ -31,7 +38,7 @@ export default function TakeoffPage() {
     (id: string, label: string, subLabel: string) => {
       setSnippets((prev) =>
         prev.map((s) =>
-          s.id === id ? { ...s, label, sub_label: subLabel } : s
+          s.id === id ? { ...s, label: label as SnippetLabel, sub_label: subLabel } : s
         )
       );
     },
@@ -219,8 +226,28 @@ export default function TakeoffPage() {
             {/* Drawing viewer — takes most of the horizontal space */}
             <div className="min-w-0 flex-1">
               <DrawingViewer
-                onSnippetCaptured={handleSnippetCaptured}
-                highlightSnippet={highlightSnippet}
+                pageCount={pageCount}
+                currentPage={currentPage}
+                onPageChange={setCurrentPage}
+                snippets={snippets}
+                snipMode={snipMode}
+                onToggleSnip={() => setSnipMode((m) => !m)}
+                onSnipComplete={(bbox) => {
+                  const snippet: SnippetData = {
+                    id: `s${Date.now()}`,
+                    label: "fixture_schedule",
+                    sub_label: "",
+                    page_number: currentPage,
+                    bbox,
+                  };
+                  handleSnippetCaptured(snippet);
+                  setSnipMode(false);
+                }}
+                onUpload={() => setPdfLoaded(false)}
+                pdfLoaded={pdfLoaded}
+                pipelineSteps={null}
+                pipelineRunning={isRunning}
+                snippetFlash={highlightSnippet?.id ?? null}
               />
             </div>
 
@@ -233,6 +260,7 @@ export default function TakeoffPage() {
                 onHighlightSnippet={setHighlightSnippet}
                 onRunTakeoff={handleRunTakeoff}
                 isRunning={isRunning}
+                hasPdf={pdfLoaded}
               />
             </div>
           </>
@@ -292,6 +320,7 @@ export default function TakeoffPage() {
                 }
                 pipelineStatus={pipelineStatus}
                 isLoading={isRunning}
+                onClose={() => setPanelMode("workspace")}
               />
             )}
           </div>

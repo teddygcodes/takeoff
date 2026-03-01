@@ -3,6 +3,8 @@
 import { useState, useCallback } from "react";
 import type { TakeoffResult } from "@/lib/types";
 
+export type { TakeoffResult as TakeoffResultData };
+
 interface ResultsPanelProps {
   data: TakeoffResult;
   pipelineStatus?: string;

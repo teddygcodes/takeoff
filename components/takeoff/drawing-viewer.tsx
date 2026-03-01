@@ -12,6 +12,8 @@ import {
 import { SnippingTool, type SnipRect } from "./snipping-tool";
 import type { Snippet, PipelineStep } from "@/lib/types";
 
+export type { Snippet as SnippetData };
+
 /* ── Props ────────────────────────────────────────────────────────── */
 
 interface DrawingViewerProps {
