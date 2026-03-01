@@ -129,8 +129,8 @@ export default function TakeoffPage() {
                 setIsRunning(false);
                 setPipelineStatus("");
               }
-            } catch (parseErr) {
-              console.warn("[Takeoff SSE] Failed to parse event JSON:", line, parseErr);
+            } catch {
+              // Ignore unparseable SSE lines (keep-alives, partial frames)
             }
           }
         }
@@ -191,6 +191,7 @@ export default function TakeoffPage() {
           <div className="flex gap-1">
             <button
               onClick={() => setPanelMode("workspace")}
+              aria-pressed={panelMode === "workspace"}
               className="rounded px-3 py-1.5 text-xs transition-colors"
               style={{
                 fontFamily: "var(--font-ibm-plex-mono)",
@@ -205,6 +206,7 @@ export default function TakeoffPage() {
             </button>
             <button
               onClick={() => setPanelMode("results")}
+              aria-pressed={panelMode === "results"}
               className="rounded px-3 py-1.5 text-xs transition-colors"
               style={{
                 fontFamily: "var(--font-ibm-plex-mono)",

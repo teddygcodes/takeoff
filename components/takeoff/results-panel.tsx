@@ -28,7 +28,7 @@ function exportCSV(data: TakeoffResult) {
     ["Confidence", `${(data.confidence_score * 100).toFixed(0)}% (${data.confidence_band})`],
     ["Verdict", data.judge_verdict],
   ];
-  const csv = rows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
+  const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -50,9 +50,10 @@ function exportJSON(data: TakeoffResult) {
 
 function copyTable(data: TakeoffResult) {
   const header = "TYPE\tDESCRIPTION\tCOUNT\tREVISED\tDIFF\tDIFFICULTY";
+  const esc = (v: string | number) => String(v).replace(/\t/g, " ");
   const rows = data.fixture_counts.map(
     (f) =>
-      `${f.type_tag}\t${f.description}\t${f.total}\t${f.revised ?? f.total}\t${f.delta ? (f.delta > 0 ? "+" + f.delta : f.delta) : "—"}\t${f.difficulty}`
+      `${esc(f.type_tag)}\t${esc(f.description)}\t${f.total}\t${f.revised ?? f.total}\t${f.delta ? (f.delta > 0 ? "+" + f.delta : f.delta) : "—"}\t${esc(f.difficulty)}`
   );
   const total = `TOTAL\t\t${data.grand_total}\t${data.revised_total ?? data.grand_total}`;
   navigator.clipboard.writeText([header, ...rows, total].join("\n")).catch((e) =>
@@ -160,10 +161,20 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-border">
+      <div
+        className="flex border-b border-border"
+        role="tablist"
+        onKeyDown={(e) => {
+          const idx = tabs.findIndex((t) => t.key === activeTab);
+          if (e.key === "ArrowRight") setActiveTab(tabs[(idx + 1) % tabs.length].key);
+          else if (e.key === "ArrowLeft") setActiveTab(tabs[(idx - 1 + tabs.length) % tabs.length].key);
+        }}
+      >
         {tabs.map((tab) => (
           <button
             key={tab.key}
+            role="tab"
+            aria-selected={activeTab === tab.key}
             onClick={() => setActiveTab(tab.key)}
             className={`px-4 py-2.5 text-sm transition-colors ${
               activeTab === tab.key
@@ -425,6 +436,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
                 </h3>
 
                 {Object.entries(data.confidence_breakdown).map(([feature, value]) => {
+                  if (typeof value !== "number") return null;
                   const displayNames: Record<string, string> = {
                     schedule_match: "Schedule Match",
                     area_coverage: "Area Coverage",
@@ -434,7 +446,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
                     note_compliance: "Note Compliance",
                     reconciler_coverage: "Reconciler Coverage",
                   };
-                  const numVal = value as number;
+                  const numVal = value;
                   const pct = Math.round(numVal * 100);
                   const barColor =
                     pct >= 85 ? "#16a34a" :
