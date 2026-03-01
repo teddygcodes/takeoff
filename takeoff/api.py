@@ -112,7 +112,7 @@ app.add_middleware(
 )
 
 # Optional API key guard — set TAKEOFF_API_KEY env var to enable
-_TAKEOFF_API_KEY = os.getenv("TAKEOFF_API_KEY")
+_TAKEOFF_API_KEY = (os.getenv("TAKEOFF_API_KEY") or "").strip() or None
 
 @app.middleware("http")
 async def api_key_guard(request: Request, call_next):
@@ -258,7 +258,7 @@ async def generate_takeoff_stream(request: TakeoffRequest) -> AsyncGenerator[str
 
     except Exception as e:
         error_msg = str(e)
-        print(f"[TAKEOFF API] Error: {error_msg}")
+        logger.error("[TAKEOFF API] Unhandled error in SSE stream", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
     finally:
         if _semaphore_acquired:

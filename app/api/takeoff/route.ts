@@ -23,15 +23,22 @@ const TAKEOFF_API_URL =
 export async function POST(req: NextRequest) {
   const body = await req.json();
 
-  // Forward to Python backend
-  const upstreamRes = await fetch(`${TAKEOFF_API_URL}/takeoff/run`, {
+  // "duplex: half" is required by Node.js fetch when sending a body while streaming
+  // the response. Not part of the standard RequestInit type, hence the cast.
+  const fetchOptions = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    // @ts-ignore — Node.js fetch supports duplex streaming
+    signal: AbortSignal.timeout(120_000),
     duplex: "half",
-  }).catch((err) => {
-    throw new Error(`Cannot reach takeoff backend at ${TAKEOFF_API_URL}: ${err.message}`);
+  } as RequestInit & { duplex: string };
+
+  const upstreamRes = await fetch(
+    `${TAKEOFF_API_URL}/takeoff/run`,
+    fetchOptions
+  ).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Cannot reach takeoff backend at ${TAKEOFF_API_URL}: ${message}`);
   });
 
   if (!upstreamRes.ok) {
@@ -73,7 +80,7 @@ export async function GET() {
     return Response.json(json, { status: res.status });
   } catch (err) {
     return Response.json(
-      { status: "unreachable", detail: (err as Error).message },
+      { status: "unreachable", detail: err instanceof Error ? err.message : String(err) },
       { status: 503 }
     );
   }

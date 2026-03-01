@@ -29,6 +29,12 @@ except ImportError:
         "Vision extraction will fail at runtime. Run: pip install anthropic"
     )
 
+# Base exception types caught in all extraction functions.
+# Includes anthropic.APIError (covers 4xx/5xx/network failures) when available.
+_EXTRACTION_ERRORS = (
+    RuntimeError, json.JSONDecodeError, ValueError, OSError, TimeoutError
+) + ((anthropic.APIError,) if HAS_ANTHROPIC else ())
+
 
 # ─── Vision Cost Tracking ─────────────────────────────────────────────────────
 
@@ -495,7 +501,7 @@ Return ONLY valid JSON (no markdown fences):
         logger.info("[EXTRACTION] Fixture schedule: %d types extracted", len(fixtures_raw))
         return fixture_schedule
 
-    except (RuntimeError, json.JSONDecodeError, ValueError, OSError, TimeoutError) as e:
+    except _EXTRACTION_ERRORS as e:
         logger.error("[EXTRACTION] ERROR extracting fixture schedule: %s", e, exc_info=True)
         return FixtureSchedule(warnings=[f"Extraction failed: {str(e)}"])
 
@@ -572,7 +578,7 @@ Return ONLY valid JSON:
         logger.info("[EXTRACTION] RCP '%s': %d fixtures across %d types", area_label, total, len(area_count.counts_by_type))
         return area_count
 
-    except (RuntimeError, json.JSONDecodeError, ValueError, OSError, TimeoutError) as e:
+    except _EXTRACTION_ERRORS as e:
         logger.error("[EXTRACTION] ERROR extracting RCP counts for '%s': %s", area_label, e, exc_info=True)
         return AreaCount(area_label=area_label, warnings=[f"Extraction failed: {str(e)}"])
 
@@ -629,7 +635,7 @@ Return ONLY valid JSON:
         logger.info("[EXTRACTION] Plan notes: %d constraints extracted", len(notes))
         return notes
 
-    except (RuntimeError, json.JSONDecodeError, ValueError, OSError, TimeoutError) as e:
+    except _EXTRACTION_ERRORS as e:
         logger.error("[EXTRACTION] ERROR extracting plan notes: %s", e, exc_info=True)
         return []
 
@@ -688,6 +694,6 @@ Return ONLY valid JSON:
         logger.info("[EXTRACTION] Panel '%s': %d circuits, %s VA total", panel.panel_name, len(panel.circuits), panel.total_load_va)
         return panel
 
-    except (RuntimeError, json.JSONDecodeError, ValueError, OSError, TimeoutError) as e:
+    except _EXTRACTION_ERRORS as e:
         logger.error("[EXTRACTION] ERROR extracting panel schedule: %s", e, exc_info=True)
         return PanelData(warnings=[f"Extraction failed: {str(e)}"])

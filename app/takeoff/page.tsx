@@ -81,7 +81,7 @@ export default function TakeoffPage() {
           signal: controller.signal,
         });
 
-        if (!res.ok) throw new Error("Takeoff request failed");
+        if (!res.ok) throw new Error(`Takeoff request failed: ${res.status} ${res.statusText}`);
 
         const reader = res.body?.getReader();
         if (!reader) throw new Error("No response stream");

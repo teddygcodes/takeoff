@@ -35,7 +35,7 @@ function exportCSV(data: TakeoffResult) {
   a.href = url;
   a.download = `takeoff_${data.drawing_name || "results"}.csv`;
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 100);
 }
 
 function exportJSON(data: TakeoffResult) {
@@ -45,7 +45,7 @@ function exportJSON(data: TakeoffResult) {
   a.href = url;
   a.download = `takeoff_${data.drawing_name || "results"}.json`;
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 100);
 }
 
 function copyTable(data: TakeoffResult) {
@@ -55,7 +55,9 @@ function copyTable(data: TakeoffResult) {
       `${f.type_tag}\t${f.description}\t${f.total}\t${f.revised ?? f.total}\t${f.delta ? (f.delta > 0 ? "+" + f.delta : f.delta) : "—"}\t${f.difficulty}`
   );
   const total = `TOTAL\t\t${data.grand_total}\t${data.revised_total ?? data.grand_total}`;
-  navigator.clipboard.writeText([header, ...rows, total].join("\n"));
+  navigator.clipboard.writeText([header, ...rows, total].join("\n")).catch((e) =>
+    console.error("Clipboard write failed", e)
+  );
 }
 
 const VERDICT_STYLES: Record<string, { bg: string; border: string; text: string; icon: string; label: string }> = {
@@ -185,6 +187,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
                   {["TYPE", "DESCRIPTION", "COUNT", "REVISED", "DIFF", "DIFFICULTY"].map((h) => (
                     <th
                       key={h}
+                      scope="col"
                       className="px-4 py-2.5 text-left font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
                     >
                       {h}

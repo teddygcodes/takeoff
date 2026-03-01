@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import {
   Scissors,
   ZoomIn,
@@ -122,13 +122,19 @@ export function DrawingViewer({
   }, [snipRect, onSnipComplete]);
 
   /* Current page snippets */
-  const pageSnippets = snippets.filter((s) => s.page_number === currentPage);
+  const pageSnippets = useMemo(
+    () => snippets.filter((s) => s.page_number === currentPage),
+    [snippets, currentPage]
+  );
 
   /* Snippet counts per page for sidebar badges */
-  const snippetsByPage = snippets.reduce<Record<number, number>>((acc, s) => {
-    acc[s.page_number] = (acc[s.page_number] || 0) + 1;
-    return acc;
-  }, {});
+  const snippetsByPage = useMemo(
+    () => snippets.reduce<Record<number, number>>((acc, s) => {
+      acc[s.page_number] = (acc[s.page_number] || 0) + 1;
+      return acc;
+    }, {}),
+    [snippets]
+  );
 
   /* ── Page sidebar ───────────────────────────────────────────── */
   const renderSidebar = () => {
@@ -177,7 +183,7 @@ export function DrawingViewer({
       <button
         onClick={onToggleSnip}
         disabled={!pdfLoaded || pipelineRunning}
-        className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+        className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 ${
           snipMode
             ? "bg-accent text-white"
             : "text-muted-foreground hover:bg-canvas hover:text-foreground disabled:opacity-40"

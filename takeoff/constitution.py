@@ -353,6 +353,12 @@ def check_emergency_fixtures(fixture_counts: list) -> list:
     return violations
 
 
+_ASSUMPTION_KEYWORDS = [
+    "assume", "assumed", "unclear", "ambiguous", "unknown", "uncertain",
+    "estimated", "approximate", "guess", "possibly", "likely", "probable"
+]
+
+
 def check_flag_assumptions(fixture_counts: list) -> list:
     """Check that ambiguous fixtures are explicitly flagged, not silently guessed.
 
@@ -366,10 +372,6 @@ def check_flag_assumptions(fixture_counts: list) -> list:
     Returns:
         List of violations
     """
-    ASSUMPTION_KEYWORDS = [
-        "assume", "assumed", "unclear", "ambiguous", "unknown", "uncertain",
-        "estimated", "approximate", "guess", "possibly", "likely", "probable"
-    ]
     violations = []
 
     for fc in fixture_counts:
@@ -388,7 +390,7 @@ def check_flag_assumptions(fixture_counts: list) -> list:
             })
 
         # Fixtures with assumption language in description/notes but no flags
-        elif any(kw in combined for kw in ASSUMPTION_KEYWORDS) and not flags:
+        elif any(kw in combined for kw in _ASSUMPTION_KEYWORDS) and not flags:
             violations.append({
                 "rule": "Flag Assumptions",
                 "severity": "MAJOR",

@@ -83,13 +83,19 @@ def calculate_confidence(
     # % of RCP snippets that have corresponding areas in the count.
     # Uses the same normalization + fuzzy matching as constitution Rule 2 so that
     # a job passing programmatic coverage check also scores well here.
-    rcp_snippet_areas = [s.get("sub_label", "").strip() for s in rcp_snippets if s.get("label") == "rcp" and s.get("sub_label")]
+    rcp_snippet_areas = [
+        s.get("sub_label", "").strip()
+        for s in rcp_snippets
+        if s.get("label") == "rcp" and s.get("sub_label")
+    ]
     covered_normalized = {_normalize_area_label(a) for a in areas_covered}
 
     if rcp_snippet_areas:
         matched_count = 0
         for raw_label in rcp_snippet_areas:
             norm = _normalize_area_label(raw_label)
+            if not norm:
+                continue  # skip labels that normalize to empty (e.g. revision-only strings)
             if norm in covered_normalized or _area_fuzzy_match(norm, covered_normalized):
                 matched_count += 1
         features["area_coverage"] = matched_count / len(rcp_snippet_areas)

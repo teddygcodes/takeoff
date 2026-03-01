@@ -420,7 +420,7 @@ class TakeoffEngine:
                 _error_code = "blank_drawing"
                 _error_msg = "No fixtures detected in provided snippets."
             return {
-                "job_id": job_id, "verdict": "BLOCK", "confidence_score": 0.25,
+                "job_id": job_id, "verdict": "BLOCK", "confidence": 0.25,
                 "confidence_band": "VERY_LOW", "grand_total": 0,
                 "fixture_table": [], "fixture_counts": [],
                 "checker_attacks": [], "reconciler_responses": [], "violations": [],
@@ -535,7 +535,7 @@ class TakeoffEngine:
                 _error_code = "blank_drawing"
                 _error_msg = "No fixtures detected in provided snippets."
             return {
-                "job_id": job_id, "verdict": "BLOCK", "confidence_score": 0.25,
+                "job_id": job_id, "verdict": "BLOCK", "confidence": 0.25,
                 "confidence_band": "VERY_LOW", "grand_total": 0,
                 "fixture_table": [], "fixture_counts": [],
                 "checker_attacks": [], "reconciler_responses": [], "violations": [],

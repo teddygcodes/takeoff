@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import type { Snippet, ReadinessStatus } from "@/lib/types";
 
 interface SnippetTrayProps {
@@ -98,11 +98,11 @@ export function SnippetTray({
     setCollapsedSections((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
-  const grouped = snippets.reduce<Record<string, Snippet[]>>((acc, s) => {
+  const grouped = useMemo(() => snippets.reduce<Record<string, Snippet[]>>((acc, s) => {
     if (!acc[s.label]) acc[s.label] = [];
     acc[s.label].push(s);
     return acc;
-  }, {});
+  }, {}), [snippets]);
 
   const labelOrder = ["fixture_schedule", "rcp", "panel_schedule", "plan_notes", "detail", "site_plan"];
 
@@ -277,7 +277,9 @@ export function SnippetTray({
 
           {/* Mode selector */}
           <div className="mb-3">
+            <label htmlFor="mode-select" className="sr-only">Run mode</label>
             <select
+              id="mode-select"
               value={mode}
               onChange={(e) => setMode(e.target.value)}
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"

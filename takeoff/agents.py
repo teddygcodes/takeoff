@@ -13,6 +13,10 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
+# Severity ranking used when deduplicating checker attacks.
+# Unknown severities default to 0 (treated as below minor) and are logged.
+_SEVERITY_ORDER: Dict[str, int] = {"critical": 3, "major": 2, "minor": 1}
+
 from takeoff.extraction import (
     FixtureSchedule, AreaCount, PlanNote, PanelData, extract_json_from_response,
     _call_vision_with_retry, _get_vision_client,
@@ -476,7 +480,6 @@ Return JSON ONLY — no explanatory text:
             # Deduplicate attacks by (category, affected_type_tag, affected_area).
             # When duplicates share a key, keep the highest-severity one so we never
             # silently downgrade a CRITICAL attack to MINOR via dedup.
-            _SEVERITY_ORDER = {"critical": 3, "major": 2, "minor": 1}
             seen_attacks: dict = {}
             for attack in attacks:
                 key = (
@@ -487,18 +490,24 @@ Return JSON ONLY — no explanatory text:
                 if key not in seen_attacks:
                     seen_attacks[key] = attack
                 else:
-                    existing_sev = _SEVERITY_ORDER.get(seen_attacks[key].get("severity", "minor"), 1)
-                    new_sev = _SEVERITY_ORDER.get(attack.get("severity", "minor"), 1)
+                    raw_existing = (seen_attacks[key].get("severity") or "minor").lower()
+                    raw_new = (attack.get("severity") or "minor").lower()
+                    if raw_existing not in _SEVERITY_ORDER:
+                        logger.warning("[CHECKER] Unknown severity '%s' in existing attack; treating as 0", raw_existing)
+                    if raw_new not in _SEVERITY_ORDER:
+                        logger.warning("[CHECKER] Unknown severity '%s' in new attack; treating as 0", raw_new)
+                    existing_sev = _SEVERITY_ORDER.get(raw_existing, 0)
+                    new_sev = _SEVERITY_ORDER.get(raw_new, 0)
                     if new_sev > existing_sev:
                         seen_attacks[key] = attack  # keep higher-severity entry
             deduped = list(seen_attacks.values())
             if len(deduped) < len(attacks):
-                print(f"[CHECKER] Deduplicated {len(attacks) - len(deduped)} duplicate attacks")
+                logger.info("[CHECKER] Deduplicated %d duplicate attacks", len(attacks) - len(deduped))
             data["attacks"] = deduped
             data["total_attacks"] = len(deduped)
 
             critical = data.get("critical_count", 0)
-            print(f"[CHECKER] {len(deduped)} attacks ({critical} critical)")
+            logger.info("[CHECKER] %d attacks (%d critical)", len(deduped), critical)
             return TakeoffResponse(
                 agent_role="checker",
                 data=data,
