@@ -324,7 +324,10 @@ Check for: missed areas, double-counted overlapping views, wrong fixture type as
 
                 def _check_one_area(rcp: Dict) -> List[Dict]:
                     """Run one vision check for a single RCP area; returns list of attack dicts."""
-                    area_label = rcp.get("area_label", "Unknown area")
+                    raw_label = rcp.get("area_label", "")
+                    area_label = raw_label.strip() if raw_label and raw_label.strip() else "Unknown area"
+                    if area_label == "Unknown area":
+                        logger.warning("[CHECKER] RCP snippet missing 'area_label' — defaulting to 'Unknown area'; results may merge if multiple snippets share this default")
                     image_data = rcp.get("image_data", "")
                     if not image_data:
                         logger.warning("[CHECKER] No image_data for area '%s' — skipping vision check", area_label)

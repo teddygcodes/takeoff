@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
+
+let _snippetSeq = 0;
 import Link from "next/link";
 import { DrawingViewer, type SnippetData } from "@/components/takeoff/drawing-viewer";
 import { SnippetTray } from "@/components/takeoff/snippet-tray";
@@ -227,7 +229,7 @@ export default function TakeoffPage() {
                 onToggleSnip={() => setSnipMode((m) => !m)}
                 onSnipComplete={(bbox) => {
                   const snippet: SnippetData = {
-                    id: `s${Date.now()}`,
+                    id: `s${Date.now()}_${++_snippetSeq}`,
                     label: "fixture_schedule",
                     sub_label: "",
                     page_number: currentPage,
