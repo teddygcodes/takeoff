@@ -230,6 +230,13 @@ class TakeoffEngine:
             if rcp_snippet.get("image_data", "")
         ]
 
+        if not rcp_jobs:
+            return {
+                "job_id": job_id,
+                "error": "insufficient_snippets",
+                "message": "All RCP snippets have empty image data — at least 1 valid RCP image is required."
+            }
+
         emit(f"Extracting {len(rcp_jobs)} RCP area(s), {len(notes_snippets)} note(s), {len(panel_snippets)} panel(s) in parallel...")
 
         # Build work units

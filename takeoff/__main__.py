@@ -99,16 +99,7 @@ Snippet JSON format (single file):
 
     args = parser.parse_args()
 
-    # Verify API key and connectivity using the shared helper
-    print("[TAKEOFF] Verifying Anthropic API key...")
-    try:
-        verify_api_key(os.getenv("ANTHROPIC_API_KEY", ""))
-        print("[TAKEOFF] ✓ API key verified\n")
-    except Exception as e:
-        print(f"[ERROR] API verification failed: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # Load snippet data
+    # Load snippet data first so file/manifest errors surface before API round-trips
     input_path = Path(args.input)
 
     if input_path.is_dir():
@@ -140,6 +131,15 @@ Snippet JSON format (single file):
 
     if not snippets:
         print("[ERROR] No snippets found in input file", file=sys.stderr)
+        sys.exit(1)
+
+    # Verify API key and connectivity using the shared helper
+    print("[TAKEOFF] Verifying Anthropic API key...")
+    try:
+        verify_api_key(os.getenv("ANTHROPIC_API_KEY", ""))
+        print("[TAKEOFF] ✓ API key verified\n")
+    except Exception as e:
+        print(f"[ERROR] API verification failed: {e}", file=sys.stderr)
         sys.exit(1)
 
     print(f"[TAKEOFF] Loaded {len(snippets)} snippets")

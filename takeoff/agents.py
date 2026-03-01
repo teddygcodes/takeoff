@@ -853,9 +853,9 @@ def validate_grand_total(agent_output: dict, agent_name: str = "Agent") -> Grand
     if computed_total == 0:
         if reported_total > 0:
             # All per-type totals are zero but grand_total claims non-zero — correct it.
-            print(
-                f"[{agent_name}] WARNING: grand_total_fixtures={reported_total} "
-                f"but all per-type totals are 0. Correcting grand_total to 0."
+            logger.warning(
+                "%s grand_total_fixtures=%s but all per-type totals are 0. Correcting grand_total to 0.",
+                agent_name, reported_total
             )
             corrected = dict(agent_output)
             corrected["grand_total_fixtures"] = 0
@@ -864,10 +864,9 @@ def validate_grand_total(agent_output: dict, agent_name: str = "Agent") -> Grand
 
     discrepancy = abs(reported_total - computed_total) / computed_total
     if discrepancy > 0.05:
-        print(
-            f"[{agent_name}] WARNING: grand_total_fixtures={reported_total} "
-            f"differs from computed sum={computed_total} "
-            f"({discrepancy * 100:.1f}% discrepancy). Using computed sum."
+        logger.warning(
+            "%s grand_total_fixtures=%s differs from computed sum=%s (%.1f%% discrepancy). Using computed sum.",
+            agent_name, reported_total, computed_total, discrepancy * 100
         )
         corrected = dict(agent_output)
         corrected["grand_total_fixtures"] = computed_total

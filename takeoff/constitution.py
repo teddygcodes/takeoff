@@ -421,7 +421,7 @@ def check_non_negative_counts(fixture_counts: list) -> list:
                 "explanation": f"Type '{tag}' has a negative total count ({total}). Counts must be ≥ 0."
             })
         for area, count in fc.get("counts_by_area", {}).items():
-            if not isinstance(count, int) and isinstance(count, float):
+            if not isinstance(count, int):
                 violations.append({
                     "rule": "Non-Negative Counts",
                     "severity": "MAJOR",

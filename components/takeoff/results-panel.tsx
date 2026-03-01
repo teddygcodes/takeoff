@@ -323,7 +323,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
 
                 return (
                   <div
-                    key={i}
+                    key={entry.attack_id || i}
                     className="mb-3 rounded-lg border border-border bg-background p-4"
                   >
                     <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -360,7 +360,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
                   Constitutional Violations
                 </p>
                 {data.constitutional_violations.map((v, i) => (
-                  <div key={i} className="mb-2 last:mb-0">
+                  <div key={`${v.rule}-${i}`} className="mb-2 last:mb-0">
                     <p className="text-xs font-semibold text-red-600">
                       {v.severity} {"\u2014"} {v.rule}
                     </p>
