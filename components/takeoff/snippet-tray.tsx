@@ -174,7 +174,7 @@ export function SnippetTray({
                               <div className="p-3">
                                 <select
                                   value={editLabel}
-                                  onChange={(e) => { if (LABEL_OPTIONS.some((o) => o.value === e.target.value)) setEditLabel(e.target.value); }}
+                                  onChange={(e) => { setEditLabel(LABEL_OPTIONS.some((o) => o.value === e.target.value) ? e.target.value : editLabel); }}
                                   className="mb-2 w-full rounded-md border border-border bg-background px-2 py-1.5 font-sans text-xs text-foreground"
                                 >
                                   {LABEL_OPTIONS.map((opt) => (
@@ -282,7 +282,7 @@ export function SnippetTray({
             <select
               id="mode-select"
               value={mode}
-              onChange={(e) => { if (e.target.value in MODE_INFO) setMode(e.target.value); }}
+              onChange={(e) => { setMode(e.target.value in MODE_INFO ? e.target.value : mode); }}
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
             >
               {Object.entries(MODE_INFO).map(([key, info]) => (

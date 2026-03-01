@@ -463,8 +463,8 @@ class TakeoffEngine:
         emit(f"Judge verdict: {judge_result.get('verdict')}")
 
         # Confidence
-        fixture_counts_list = counter_output.get("fixture_counts", [])
-        areas_covered = counter_output.get("areas_covered", [])
+        fixture_counts_list = counter_output.get("fixture_counts") or []
+        areas_covered = counter_output.get("areas_covered") or []
 
         # Fast mode: skip structural notes check (it's unreliable — only checks type presence,
         # not constraint application). Pass has_plan_notes=False so confidence uses neutral 0.5.
@@ -624,8 +624,8 @@ class TakeoffEngine:
         emit(f"Judge verdict: {judge_result.get('verdict')}")
 
         # Confidence
-        fixture_counts_list = counter_output.get("fixture_counts", [])
-        areas_covered = counter_output.get("areas_covered", [])
+        fixture_counts_list = counter_output.get("fixture_counts") or []
+        areas_covered = counter_output.get("areas_covered") or []
 
         # Determine notes compliance from Reconciler's semantic check.
         # If Reconciler produced no notes_compliance, treat as unverified (conservative).

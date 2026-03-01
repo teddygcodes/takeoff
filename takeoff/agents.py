@@ -743,7 +743,7 @@ class Judge:
         critical_attacks = [a for a in checker_attacks if a.get("severity") == "critical"]
         unresolved = []
         if reconciler_output:
-            resolved_ids = {r.get("attack_id") for r in reconciler_output.get("responses", [])}
+            resolved_ids = {r.get("attack_id") for r in reconciler_output.get("responses", []) if r.get("attack_id")}
             unresolved = [a for a in checker_attacks if a.get("attack_id") not in resolved_ids]
 
         system_prompt = f"""You are the JUDGE agent in the Takeoff adversarial system — the final constitutional authority.

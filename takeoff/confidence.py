@@ -110,8 +110,8 @@ def calculate_confidence(
     # What % of Checker attacks were explicitly addressed by Reconciler
     if checker_attacks:
         if reconciler_responses:
-            resolved_attack_ids = {r.get("attack_id") for r in reconciler_responses}
-            checker_attack_ids = {a.get("attack_id") for a in checker_attacks}
+            resolved_attack_ids = {r.get("attack_id") for r in reconciler_responses if r.get("attack_id")}
+            checker_attack_ids = {a.get("attack_id") for a in checker_attacks if a.get("attack_id")}
             resolved_ratio = len(resolved_attack_ids & checker_attack_ids) / len(checker_attack_ids)
             features["adversarial_resolved"] = resolved_ratio
         else:
@@ -286,6 +286,8 @@ def format_confidence_explanation(confidence_result: Dict) -> str:
     # Feature breakdown table
     lines.append("\nFeature Breakdown:")
     for feature, value in features.items():
+        if not isinstance(value, (int, float)):
+            value = 0.0
         weight = FEATURE_WEIGHTS.get(feature, 0.0)
         contribution = value * weight
         lines.append(f"  {feature}: {value:.2f} × {weight:+.2f} = {contribution:+.3f}")

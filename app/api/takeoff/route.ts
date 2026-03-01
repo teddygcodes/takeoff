@@ -87,6 +87,12 @@ export async function POST(req: NextRequest) {
   }
 
   // Pass the stream through unchanged
+  if (!upstreamRes.body) {
+    return new Response(
+      JSON.stringify({ type: "error", message: "Upstream returned no body" }),
+      { status: 502, headers: { "Content-Type": "application/json" } }
+    );
+  }
   return new Response(upstreamRes.body, {
     status: 200,
     headers: {
