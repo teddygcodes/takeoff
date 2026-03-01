@@ -22,7 +22,9 @@ from takeoff.constitution import get_constitution, enforce_constitution
 from takeoff.confidence import calculate_confidence, format_confidence_explanation
 from takeoff.extraction import (
     FixtureSchedule, AreaCount, PlanNote, PanelData,
-    extract_fixture_schedule, extract_rcp_counts, extract_plan_notes, extract_panel_schedule
+    GridResult,
+    extract_fixture_schedule, extract_rcp_counts, extract_plan_notes, extract_panel_schedule,
+    extract_rcp_counts_gridded, grid_result_to_area_count,
 )
 from takeoff.agents import Counter, Checker, Reconciler, Judge, validate_grand_total
 from takeoff.extraction import reset_vision_cost, get_vision_cost_usd
@@ -89,7 +91,10 @@ class TakeoffEngine:
         snippets: List[Dict],
         mode: Optional[str] = "strict",
         drawing_name: Optional[str] = None,
-        status_callback=None
+        status_callback=None,
+        use_grid: bool = True,
+        grid_rows: int = 3,
+        grid_cols: int = 3,
     ) -> Dict:
         """Execute the full adversarial takeoff pipeline.
 
@@ -219,9 +224,8 @@ class TakeoffEngine:
 
         self.db.store_fixture_schedule(job_id, {"fixtures": fixture_schedule.fixtures})
 
-        # ─── Steps 3-5: Extract RCP, notes, and panel in parallel ─────────────
+        # ─── Steps 3-5: Extract RCP, notes, and panel ────────────────────────
         # RCP needs the fixture schedule for context, so these run after Step 2.
-        # Within this group they are independent and can run concurrently.
 
         # Pre-compute area labels (avoids index-ordering issues with threads)
         rcp_jobs = [
@@ -237,106 +241,139 @@ class TakeoffEngine:
                 "message": "All RCP snippets have empty image data — at least 1 valid RCP image is required."
             }
 
-        emit(f"Extracting {len(rcp_jobs)} RCP area(s), {len(notes_snippets)} note(s), {len(panel_snippets)} panel(s) in parallel...")
-
-        # Build work units
-        _parallel_work = []
-        _rcp_indices: List[int] = []
-        _notes_indices: List[int] = []
-        _panel_indices: List[int] = []
-
-        for area_label, rcp_snippet in rcp_jobs:
-            _rcp_indices.append(len(_parallel_work))
-            _parallel_work.append(("rcp", area_label, rcp_snippet.get("image_data", "")))
-
+        # Notes and panel extraction: run in background regardless of RCP strategy
+        _notes_futures = []
+        _panel_futures = []
+        _bg_ex = ThreadPoolExecutor(max_workers=4)
         for notes_snippet in notes_snippets:
             if notes_snippet.get("image_data", ""):
-                _notes_indices.append(len(_parallel_work))
-                _parallel_work.append(("notes", None, notes_snippet.get("image_data", "")))
-
+                _notes_futures.append(_bg_ex.submit(extract_plan_notes, notes_snippet.get("image_data", "")))
         for panel_snippet in panel_snippets:
             if panel_snippet.get("image_data", ""):
-                _panel_indices.append(len(_parallel_work))
-                _parallel_work.append(("panel", None, panel_snippet.get("image_data", "")))
+                _panel_futures.append(_bg_ex.submit(extract_panel_schedule, panel_snippet.get("image_data", "")))
 
-        _results: List = [None] * len(_parallel_work)
+        # RCP extraction — grid mode processes areas sequentially (for progress updates),
+        # each area running its own internal parallel cell×type calls.
+        # Non-grid mode uses the original parallel extraction strategy.
+        grid_results: Dict[str, GridResult] = {}
+        area_counts: List[AreaCount] = []
+        # Collect areas that fell back to full-image so the Checker still gets
+        # independent vision coverage for them (via its rcp_images path).
+        _grid_fallback_rcp_images: List[Dict] = []
 
-        if _parallel_work:
-            max_workers = min(len(_parallel_work), 8)
-            with ThreadPoolExecutor(max_workers=max_workers) as _ex:
-                idx_futures = {}
-                for i, (kind, label, img) in enumerate(_parallel_work):
-                    if kind == "rcp":
-                        idx_futures[_ex.submit(extract_rcp_counts, img, fixture_schedule, label)] = i
-                    elif kind == "notes":
-                        idx_futures[_ex.submit(extract_plan_notes, img)] = i
-                    else:
-                        idx_futures[_ex.submit(extract_panel_schedule, img)] = i
-                for fut in as_completed(idx_futures, timeout=200):
-                    idx = idx_futures[fut]
-                    try:
-                        _results[idx] = fut.result()
-                    except FuturesTimeoutError:
-                        emit("WARNING: Parallel extraction timed out for one snippet")
-                    except Exception as _e:
-                        emit(f"WARNING: Parallel extraction failed for one snippet: {_e}")
-                        # _results[idx] stays None — downstream code handles None gracefully
-
-        # Collect ordered results
-        area_counts: List[AreaCount] = [_results[i] for i in _rcp_indices if _results[i] is not None]
-        for ac in area_counts:
-            emit(f"Counted fixtures in '{ac.area_label}'")
-
-        plan_notes: List[PlanNote] = []
-        for i in _notes_indices:
-            if _results[i]:
-                plan_notes.extend(_results[i])
-
-        panel_data: Optional[PanelData] = None
-        for i in _panel_indices:
-            extracted = _results[i]
-            if extracted is None:
-                continue
-            if panel_data is None:
-                panel_data = extracted
-            else:
-                # Warn when panel names disagree — may be two distinct panels being merged
-                if (
-                    extracted.panel_name
-                    and panel_data.panel_name
-                    and extracted.panel_name != panel_data.panel_name
-                ):
-                    emit(
-                        f"WARNING: Panel names differ across snippets "
-                        f"('{panel_data.panel_name}' vs '{extracted.panel_name}') — "
-                        "merging circuits; verify these are the same panel"
+        if use_grid:
+            emit(f"Extracting {len(rcp_jobs)} RCP area(s) via {grid_rows}x{grid_cols} grid counting...")
+            for area_label, rcp_snippet in rcp_jobs:
+                img_data = rcp_snippet.get("image_data", "")
+                if not img_data:
+                    continue
+                emit(f"Counting fixtures in '{area_label}' ({grid_rows}x{grid_cols} grid, {len(fixture_schedule.fixtures)} types)...")
+                try:
+                    grid_result = extract_rcp_counts_gridded(
+                        snippet_image=img_data,
+                        fixture_schedule=fixture_schedule,
+                        area_label=area_label,
+                        grid_rows=grid_rows,
+                        grid_cols=grid_cols,
                     )
-                # Merge circuits from additional panels.
-                # Deduplicate by (panel_name, circuit) to prevent double-counting
-                # when the same panel snippet is submitted twice.
-                existing_keys = {
-                    (panel_data.panel_name, c.get("circuit"))
-                    for c in panel_data.circuits
+                    grid_results[area_label] = grid_result
+                    ac = grid_result_to_area_count(grid_result)
+                    area_counts.append(ac)
+                    total = sum(grid_result.area_totals.values())
+                    emit(f"  {area_label}: {total} fixtures across {len(grid_result.grid_cells)} cells")
+                except Exception as _ge:
+                    logger.warning("[ENGINE] Grid extraction failed for '%s': %s — falling back to full-image", area_label, _ge)
+                    emit(f"  WARNING: Grid extraction failed for '{area_label}', using full-image fallback")
+                    # Track this area for Checker coverage (it won't be in grid_results)
+                    _grid_fallback_rcp_images.append({"area_label": area_label, "image_data": img_data})
+                    try:
+                        ac = extract_rcp_counts(img_data, fixture_schedule, area_label)
+                        area_counts.append(ac)
+                        emit(f"  Fallback: counted fixtures in '{area_label}'")
+                    except Exception as _fe:
+                        logger.error("[ENGINE] Full-image fallback also failed for '%s': %s", area_label, _fe)
+                        emit(f"  ERROR: All extraction methods failed for '{area_label}'")
+        else:
+            # Original parallel extraction (non-grid mode)
+            emit(f"Extracting {len(rcp_jobs)} RCP area(s) in parallel (grid disabled)...")
+            _rcp_work = [(area_label, rcp_snippet.get("image_data", "")) for area_label, rcp_snippet in rcp_jobs]
+            _rcp_results: List = [None] * len(_rcp_work)
+            with ThreadPoolExecutor(max_workers=min(len(_rcp_work), 6)) as _rcp_ex:
+                _rcp_futures = {
+                    _rcp_ex.submit(extract_rcp_counts, img, fixture_schedule, lbl): i
+                    for i, (lbl, img) in enumerate(_rcp_work)
                 }
-                for circuit in extracted.circuits:
-                    key = (extracted.panel_name, circuit.get("circuit"))
-                    if key not in existing_keys:
-                        panel_data.circuits.append(circuit)
-                        existing_keys.add(key)
-                if extracted.total_load_va and panel_data.total_load_va:
-                    panel_data.total_load_va = panel_data.total_load_va + extracted.total_load_va
-                panel_data.warnings.extend(extracted.warnings)
+                for fut in as_completed(_rcp_futures, timeout=200):
+                    idx = _rcp_futures[fut]
+                    try:
+                        _rcp_results[idx] = fut.result()
+                    except Exception as _e:
+                        emit(f"WARNING: RCP extraction failed for one area: {_e}")
+            area_counts = [r for r in _rcp_results if r is not None]
+            for ac in area_counts:
+                emit(f"Counted fixtures in '{ac.area_label}'")
+
+        # Collect notes and panel results from background executor
+        try:
+            plan_notes: List[PlanNote] = []
+            for fut in as_completed(_notes_futures, timeout=200):
+                try:
+                    result = fut.result()
+                    if result:
+                        plan_notes.extend(result)
+                except Exception as _e:
+                    emit(f"WARNING: Notes extraction failed: {_e}")
+
+            panel_data: Optional[PanelData] = None
+            for fut in as_completed(_panel_futures, timeout=200):
+                try:
+                    extracted = fut.result()
+                    if extracted is None:
+                        continue
+                    if panel_data is None:
+                        panel_data = extracted
+                    else:
+                        if (
+                            extracted.panel_name
+                            and panel_data.panel_name
+                            and extracted.panel_name != panel_data.panel_name
+                        ):
+                            emit(
+                                f"WARNING: Panel names differ across snippets "
+                                f"('{panel_data.panel_name}' vs '{extracted.panel_name}') — "
+                                "merging circuits; verify these are the same panel"
+                            )
+                        existing_keys = {
+                            (panel_data.panel_name, c.get("circuit"))
+                            for c in panel_data.circuits
+                        }
+                        for circuit in extracted.circuits:
+                            key = (extracted.panel_name, circuit.get("circuit"))
+                            if key not in existing_keys:
+                                panel_data.circuits.append(circuit)
+                                existing_keys.add(key)
+                        if extracted.total_load_va and panel_data.total_load_va:
+                            panel_data.total_load_va = panel_data.total_load_va + extracted.total_load_va
+                        panel_data.warnings.extend(extracted.warnings)
+                except Exception as _e:
+                    emit(f"WARNING: Panel extraction failed: {_e}")
+        finally:
+            _bg_ex.shutdown(wait=False)
 
         # ─── Step 6: Run agent pipeline ───────────────────────────────────────
         if mode == "fast":
             result = self._run_fast_mode(
                 job_id, fixture_schedule, area_counts, plan_notes, panel_data,
-                rcp_snippets, emit, start_time
+                rcp_snippets, emit, start_time,
+                grid_results=grid_results, use_grid=use_grid, grid_rows=grid_rows, grid_cols=grid_cols,
+                grid_fallback_rcp_images=_grid_fallback_rcp_images,
             )
         else:  # strict | liability
             result = self._run_strict_mode(
                 job_id, fixture_schedule, area_counts, plan_notes, panel_data,
-                rcp_snippets, emit, start_time, mode
+                rcp_snippets, emit, start_time, mode,
+                grid_results=grid_results, use_grid=use_grid, grid_rows=grid_rows, grid_cols=grid_cols,
+                grid_fallback_rcp_images=_grid_fallback_rcp_images,
             )
 
         # Update job status — combine agent LLM costs and vision extraction costs
@@ -398,7 +435,12 @@ class TakeoffEngine:
         panel_data: Optional[PanelData],
         rcp_snippets: List[Dict],
         emit,
-        start_time: float
+        start_time: float,
+        grid_results: Optional[Dict] = None,
+        use_grid: bool = True,
+        grid_rows: int = 3,
+        grid_cols: int = 3,
+        grid_fallback_rcp_images: Optional[List[Dict]] = None,
     ) -> Dict:
         """Run fast mode: Counter + Checker + Judge (no Reconciler)."""
         emit("Running FAST mode pipeline (Counter + Checker + Judge)")
@@ -433,18 +475,28 @@ class TakeoffEngine:
         self._apply_rule6_flags(counter_output, emit)
 
         # Checker — text-based structural review + independent vision count per RCP area
-        _rcp_images = [
-            {"area_label": s.get("sub_label") or f"RCP-{i+1}", "image_data": s.get("image_data", "")}
-            for i, s in enumerate(rcp_snippets)
-            if s.get("image_data")
-        ]
-        emit(f"Checker reviewing count for errors and omissions ({len(_rcp_images)} RCP area(s) via vision)...")
-        for _rcp in _rcp_images:
-            emit(f"Checker independently reviewing {_rcp['area_label']}...")
-        checker_response = self.checker.generate_attacks(
-            counter_output, fixture_schedule, area_counts, plan_notes, panel_data,
-            rcp_images=_rcp_images,
-        )
+        if use_grid and grid_results:
+            emit(f"Checker independently verifying {sum(len(gr.grid_cells) for gr in grid_results.values())} cells across {len(grid_results)} area(s) via grid vision...")
+            if grid_fallback_rcp_images:
+                emit(f"Checker also reviewing {len(grid_fallback_rcp_images)} fallback area(s) via full-image vision...")
+            checker_response = self.checker.generate_attacks(
+                counter_output, fixture_schedule, area_counts, plan_notes, panel_data,
+                rcp_images=grid_fallback_rcp_images or None,
+                grid_results=grid_results,
+            )
+        else:
+            _rcp_images = [
+                {"area_label": s.get("sub_label") or f"RCP-{i+1}", "image_data": s.get("image_data", "")}
+                for i, s in enumerate(rcp_snippets)
+                if s.get("image_data")
+            ]
+            emit(f"Checker reviewing count for errors and omissions ({len(_rcp_images)} RCP area(s) via vision)...")
+            for _rcp in _rcp_images:
+                emit(f"Checker independently reviewing {_rcp['area_label']}...")
+            checker_response = self.checker.generate_attacks(
+                counter_output, fixture_schedule, area_counts, plan_notes, panel_data,
+                rcp_images=_rcp_images,
+            )
         checker_attacks = checker_response.data.get("attacks", [])
         if checker_response.data.get("_model_failure"):
             emit("WARNING: Checker model router failed — attacks may be incomplete")
@@ -487,7 +539,9 @@ class TakeoffEngine:
         grand_total = counter_output.get("grand_total_fixtures", 0)
         result = self._build_result(
             job_id, counter_output, checker_attacks, reconciler_output,
-            judge_result, confidence_result, fixture_schedule, "fast"
+            judge_result, confidence_result, fixture_schedule, "fast",
+            grid_results=grid_results if use_grid else None,
+            grid_rows=grid_rows, grid_cols=grid_cols,
         )
         self.db.store_job_results_atomic(
             job_id=job_id,
@@ -515,7 +569,12 @@ class TakeoffEngine:
         rcp_snippets: List[Dict],
         emit,
         start_time: float,
-        mode: str
+        mode: str,
+        grid_results: Optional[Dict] = None,
+        use_grid: bool = True,
+        grid_rows: int = 3,
+        grid_cols: int = 3,
+        grid_fallback_rcp_images: Optional[List[Dict]] = None,
     ) -> Dict:
         """Run strict/liability mode: Counter + Checker + Reconciler + Judge."""
         emit(f"Running {mode.upper()} mode pipeline (Counter + Checker + Reconciler + Judge)")
@@ -550,18 +609,28 @@ class TakeoffEngine:
         self._apply_rule6_flags(counter_output, emit)
 
         # Checker — text-based structural review + independent vision count per RCP area
-        _rcp_images = [
-            {"area_label": s.get("sub_label") or f"RCP-{i+1}", "image_data": s.get("image_data", "")}
-            for i, s in enumerate(rcp_snippets)
-            if s.get("image_data")
-        ]
-        emit(f"Checker independently reviewing count ({len(_rcp_images)} RCP area(s) via vision)...")
-        for _rcp in _rcp_images:
-            emit(f"Checker independently reviewing {_rcp['area_label']}...")
-        checker_response = self.checker.generate_attacks(
-            counter_output, fixture_schedule, area_counts, plan_notes, panel_data,
-            rcp_images=_rcp_images,
-        )
+        if use_grid and grid_results:
+            emit(f"Checker independently verifying {sum(len(gr.grid_cells) for gr in grid_results.values())} cells across {len(grid_results)} area(s) via grid vision...")
+            if grid_fallback_rcp_images:
+                emit(f"Checker also reviewing {len(grid_fallback_rcp_images)} fallback area(s) via full-image vision...")
+            checker_response = self.checker.generate_attacks(
+                counter_output, fixture_schedule, area_counts, plan_notes, panel_data,
+                rcp_images=grid_fallback_rcp_images or None,
+                grid_results=grid_results,
+            )
+        else:
+            _rcp_images = [
+                {"area_label": s.get("sub_label") or f"RCP-{i+1}", "image_data": s.get("image_data", "")}
+                for i, s in enumerate(rcp_snippets)
+                if s.get("image_data")
+            ]
+            emit(f"Checker independently reviewing count ({len(_rcp_images)} RCP area(s) via vision)...")
+            for _rcp in _rcp_images:
+                emit(f"Checker independently reviewing {_rcp['area_label']}...")
+            checker_response = self.checker.generate_attacks(
+                counter_output, fixture_schedule, area_counts, plan_notes, panel_data,
+                rcp_images=_rcp_images,
+            )
         checker_attacks = checker_response.data.get("attacks", [])
         if checker_response.data.get("_model_failure"):
             emit("WARNING: Checker model router failed — attacks may be incomplete")
@@ -669,7 +738,9 @@ class TakeoffEngine:
         grand_total = reconciler_output.get("revised_grand_total", counter_output.get("grand_total_fixtures", 0))
         result = self._build_result(
             job_id, counter_output, checker_attacks, reconciler_output,
-            judge_result, confidence_result, fixture_schedule, mode
+            judge_result, confidence_result, fixture_schedule, mode,
+            grid_results=grid_results if use_grid else None,
+            grid_rows=grid_rows, grid_cols=grid_cols,
         )
         self.db.store_job_results_atomic(
             job_id=job_id,
@@ -696,7 +767,10 @@ class TakeoffEngine:
         judge_result: dict,
         confidence_result: dict,
         fixture_schedule: FixtureSchedule,
-        mode: str
+        mode: str,
+        grid_results: Optional[Dict] = None,
+        grid_rows: int = 3,
+        grid_cols: int = 3,
     ) -> Dict:
         """Build the final result dict for API/CLI consumers."""
         # Use reconciler's revised counts if available
@@ -733,6 +807,14 @@ class TakeoffEngine:
                 counts_by_area = original_areas
                 area_flags = []
 
+            # Aggregate per-cell counts for this type across all grid areas
+            cell_counts: Dict = {}
+            if grid_results:
+                for gr in grid_results.values():
+                    for ctc in gr.cell_type_counts:
+                        if ctc.type_tag == tag:
+                            cell_counts[ctc.cell_id] = cell_counts.get(ctc.cell_id, 0) + ctc.count
+
             fixture_table.append({
                 "type_tag": tag,
                 "description": desc,
@@ -741,7 +823,8 @@ class TakeoffEngine:
                 "difficulty": fc.get("difficulty", "S"),
                 "accessories": fc.get("accessories", []),
                 "flags": fc.get("flags", []) + area_flags,
-                "counts_by_area": counts_by_area
+                "counts_by_area": counts_by_area,
+                "cell_counts": cell_counts if cell_counts else None,
             })
 
         # Adversarial log summary
@@ -762,10 +845,11 @@ class TakeoffEngine:
                 "description": attack.get("description"),
                 "suggested_correction": attack.get("suggested_correction"),
                 "resolution": resolution,
-                "verdict": verdict_text
+                "verdict": verdict_text,
+                "cell_id": attack.get("cell_id"),
             })
 
-        return {
+        result = {
             "job_id": job_id,
             "mode": mode,
             "grand_total": grand_total,
@@ -786,3 +870,10 @@ class TakeoffEngine:
                 "reconciler_responses": len(reconciler_output.get("responses", [])) if reconciler_output else 0
             }
         }
+        if grid_results:
+            result["grid_config"] = {
+                "rows": grid_rows,
+                "cols": grid_cols,
+                "cells": [c.cell_id for gr in grid_results.values() for c in gr.grid_cells][:9],
+            }
+        return result

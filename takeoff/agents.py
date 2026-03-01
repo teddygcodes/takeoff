@@ -19,8 +19,9 @@ _SEVERITY_ORDER: Dict[str, int] = {"critical": 3, "major": 2, "minor": 1}
 
 from takeoff.extraction import (
     FixtureSchedule, AreaCount, PlanNote, PanelData, extract_json_from_response,
-    _call_vision_with_retry, _get_vision_client,
+    _call_vision_with_retry, _get_vision_client, GridResult,
 )
+from takeoff.settings import API_CONFIG
 
 
 @dataclass
@@ -191,6 +192,7 @@ class Checker:
         plan_notes: List[PlanNote],
         panel_data: Optional[PanelData] = None,
         rcp_images: Optional[List[Dict]] = None,
+        grid_results: Optional[Dict] = None,  # Dict[str, GridResult]
     ) -> TakeoffResponse:
         """Find errors, omissions, and inconsistencies in the Counter's count.
 
@@ -429,9 +431,9 @@ Return JSON ONLY — no explanatory text:
                         logger.warning("[CHECKER] Vision check failed for area '%s': %s — skipping", area_label, e)
                         return []
 
-                # Run all vision checks in parallel (max 4 concurrent to avoid rate limits)
+                # Run all vision checks in parallel (max VISION_MAX_WORKERS concurrent to avoid rate limits)
                 valid_rcp = [r for r in rcp_images if r.get("image_data")]
-                max_vis_workers = min(len(valid_rcp), 4)
+                max_vis_workers = min(len(valid_rcp), API_CONFIG.get("vision_max_workers", 4))
                 all_area_attacks: List[List[Dict]] = [[] for _ in valid_rcp]
                 if max_vis_workers > 0:
                     with ThreadPoolExecutor(max_workers=max_vis_workers) as _vis_ex:
@@ -451,6 +453,127 @@ Return JSON ONLY — no explanatory text:
                         atk["attack_id"] = f"VIS{_vision_attack_counter:03d}"
                         _vision_attack_counter += 1
                         vision_attacks.append(atk)
+
+        if grid_results:
+            # ── Grid vision phase: verify each (cell, type) pair independently ──
+            # NOTE: 'if' not 'elif' — both phases can run when grid mode has partial
+            # fallback areas (rcp_images contains fallen-back areas; grid_results
+            # contains successfully gridded areas).
+            try:
+                vision_client = _get_vision_client()
+            except RuntimeError as _gve:
+                logger.warning("[CHECKER] Vision client unavailable — skipping grid vision phase: %s", _gve)
+                vision_client = None
+
+            if vision_client:
+                # Build schedule context once — used in every cell prompt for type disambiguation
+                _sched_ctx = "\n".join(
+                    f"  {_t}: {(_i.get('description', '') if isinstance(_i, dict) else str(_i))}"
+                    for _t, _i in fixture_schedule.fixtures.items()
+                )
+
+                def _check_cell_type(area_label, cell, type_tag, type_desc, counter_count):
+                    """Independently count one fixture type in one grid cell."""
+                    gr = grid_results[area_label]
+                    n_rows = max(c.row for c in gr.grid_cells) + 1 if gr.grid_cells else 3
+                    n_cols = max(c.col for c in gr.grid_cells) + 1 if gr.grid_cells else 3
+                    grid_dims = f"{n_rows}x{n_cols}"
+                    system_prompt = (
+                        f"You are independently verifying a fixture count.\n\n"
+                        f"CELL: {cell.cell_id} of area \"{area_label}\" ({grid_dims} grid)\n"
+                        f"FIXTURE TYPE: {type_tag} — {type_desc}\n"
+                        f"COUNTER'S CLAIM: {counter_count} fixtures of this type in this cell\n\n"
+                        f"RULES:\n"
+                        f"1. Count ONLY Type {type_tag}. Ignore all other types.\n"
+                        f"2. Count if center or >50% of symbol is in this cell.\n"
+                        f"3. Be independent — do not assume Counter is correct.\n\n"
+                        f"FIXTURE SCHEDULE (for type disambiguation — do NOT count other types):\n"
+                        f"{_sched_ctx}\n\n"
+                        f"Respond ONLY valid JSON:\n"
+                        f"{{\"type_tag\": \"{type_tag}\", \"independent_count\": <int>, "
+                        f"\"agrees_with_counter\": true|false, \"discrepancy\": <int>, \"notes\": \"...\"}}"
+                    )
+                    user_text = (
+                        f"Count Type {type_tag} ({type_desc}) in cell {cell.cell_id} "
+                        f"of area \"{area_label}\"."
+                    )
+                    raw = _call_vision_with_retry(
+                        vision_client, system_prompt, user_text, cell.image_base64,
+                        max_tokens=200, temperature=0.0,
+                    )
+                    parsed = extract_json_from_response(raw, "CHECKER_CELL")
+                    _raw_ic = parsed.get("independent_count", counter_count)
+                    independent_count = (
+                        int(_raw_ic) if isinstance(_raw_ic, (int, float)) and _raw_ic >= 0
+                        else counter_count
+                    )
+                    discrepancy = independent_count - counter_count
+                    notes = parsed.get("notes", "")
+                    return (area_label, cell.cell_id, type_tag, counter_count, independent_count, discrepancy, notes)
+
+                tasks = []
+                for _area_label, _grid_result in grid_results.items():
+                    ctc_map = {
+                        (ctc.cell_id, ctc.type_tag): ctc.count
+                        for ctc in _grid_result.cell_type_counts
+                    }
+                    for _cell in _grid_result.grid_cells:
+                        for _type_tag, _type_info in fixture_schedule.fixtures.items():
+                            _type_desc = (
+                                _type_info.get("description", "") if isinstance(_type_info, dict) else str(_type_info)
+                            )
+                            if not _type_desc:
+                                continue
+                            _counter_count = ctc_map.get((_cell.cell_id, _type_tag), 0)
+                            tasks.append((_area_label, _cell, _type_tag, _type_desc, _counter_count))
+
+                max_vis = min(len(tasks), API_CONFIG.get("vision_max_workers", 4) * 2) if tasks else 0
+                task_results = [None] * len(tasks)
+                if max_vis > 0:
+                    with ThreadPoolExecutor(max_workers=max_vis) as _vis_ex:
+                        _vis_futures = {_vis_ex.submit(_check_cell_type, *t): i for i, t in enumerate(tasks)}
+                        for fut in as_completed(_vis_futures):
+                            idx = _vis_futures[fut]
+                            try:
+                                task_results[idx] = fut.result()
+                            except Exception as _ve:
+                                logger.warning("[CHECKER] Cell vision failed: %s", _ve)
+
+                # Warn if too many cell vision calls failed — incomplete adversarial coverage
+                _checker_failures = sum(1 for r in task_results if r is None)
+                if tasks and _checker_failures / len(tasks) > 0.30:
+                    logger.warning(
+                        "[CHECKER] High cell vision failure rate: %d/%d tasks failed — "
+                        "adversarial grid coverage may be incomplete",
+                        _checker_failures, len(tasks)
+                    )
+
+                _cell_atk_n = 1
+                for res in task_results:
+                    if res is None:
+                        continue
+                    _a_label, _c_id, _t_tag, _c_count, _ck_count, _disc, _notes = res
+                    if _disc == 0:
+                        continue
+                    abs_d = abs(_disc)
+                    threshold_critical = max(3, int(_c_count * 0.2) + 1)
+                    severity = "critical" if abs_d >= threshold_critical else "major" if abs_d >= 2 else "minor"
+                    vision_attacks.append({
+                        "attack_id": f"CELL{_cell_atk_n:03d}",
+                        "severity": severity,
+                        "category": "cell_count_mismatch",
+                        "description": (
+                            f"[GRID CHECK] Cell {_c_id} of area '{_a_label}': "
+                            f"Counter counted {_c_count} \u00d7 Type {_t_tag}, "
+                            f"Checker found {_ck_count} (diff: {_disc:+d})"
+                        ),
+                        "affected_type_tag": _t_tag,
+                        "affected_area": _a_label,
+                        "cell_id": _c_id,
+                        "suggested_correction": f"Revise {_t_tag} in cell {_c_id} from {_c_count} to {_ck_count}",
+                        "evidence": _notes or "Independent grid cell verification",
+                    })
+                    _cell_atk_n += 1
 
         # ── Text-based LLM attack phase ────────────────────────────────────────
         try:
@@ -480,7 +603,9 @@ Return JSON ONLY — no explanatory text:
             # Combine text-based and vision-based attacks before deduplication
             attacks = data.get("attacks", []) + vision_attacks
 
-            # Deduplicate attacks by (category, affected_type_tag, affected_area).
+            # Deduplicate attacks by (category, affected_type_tag, affected_area, cell_id).
+            # cell_id is included so that CELL### attacks from different grid cells are
+            # never collapsed together — each (type, area, cell) disagreement is distinct.
             # When duplicates share a key, keep the highest-severity one so we never
             # silently downgrade a CRITICAL attack to MINOR via dedup.
             seen_attacks: dict = {}
@@ -488,7 +613,8 @@ Return JSON ONLY — no explanatory text:
                 key = (
                     (attack.get("category") or "").lower(),
                     (attack.get("affected_type_tag") or "").upper(),
-                    (attack.get("affected_area") or "").lower().strip()
+                    (attack.get("affected_area") or "").lower().strip(),
+                    (attack.get("cell_id") or ""),  # empty string for non-cell attacks
                 )
                 if key not in seen_attacks:
                     seen_attacks[key] = attack

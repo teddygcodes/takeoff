@@ -3274,6 +3274,408 @@ class TestAuditFixes(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Grid feature tests
+# ══════════════════════════════════════════════════════════════════════
+
+class TestGenerateGrid(unittest.TestCase):
+    """Tests for generate_grid() in extraction.py."""
+
+    def test_generate_grid_produces_correct_cells(self):
+        """A 300x300 image split into 3x3 should yield 9 cells with correct IDs and sizes."""
+        import io
+        import base64
+        from PIL import Image
+        from takeoff.extraction import generate_grid
+
+        # Create a 300x300 white image and encode to base64
+        img = Image.new("RGB", (300, 300), color=(255, 255, 255))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+
+        cells = generate_grid(b64, "TestArea", rows=3, cols=3)
+
+        self.assertEqual(len(cells), 9)
+        expected_ids = ["A1", "A2", "A3", "B1", "B2", "B3", "C1", "C2", "C3"]
+        self.assertEqual([c.cell_id for c in cells], expected_ids)
+        self.assertEqual(cells[0].row, 0)
+        self.assertEqual(cells[0].col, 0)
+        self.assertEqual(cells[4].cell_id, "B2")
+        self.assertEqual(cells[4].row, 1)
+        self.assertEqual(cells[4].col, 1)
+        self.assertEqual(cells[8].cell_id, "C3")
+
+        # Each cell image should decode to ~100x100 px
+        for cell in cells:
+            dec = Image.open(io.BytesIO(base64.b64decode(cell.image_base64)))
+            self.assertEqual(dec.size, (100, 100), f"Cell {cell.cell_id} wrong size: {dec.size}")
+
+        # Bounds should be fractional and cover unit square
+        for cell in cells:
+            b = cell.bounds
+            self.assertAlmostEqual(b["width"], 1 / 3, places=5)
+            self.assertAlmostEqual(b["height"], 1 / 3, places=5)
+
+    def test_generate_grid_small_image_reduces_grid(self):
+        """An image too small for a 3x3 grid should fall back to fewer cells."""
+        import io
+        import base64
+        from PIL import Image
+        from takeoff.extraction import generate_grid
+
+        # 60x60 px → cells would be 20x20, below 50px threshold → should reduce
+        img = Image.new("RGB", (60, 60), color=(200, 200, 200))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+
+        cells = generate_grid(b64, "TinyArea", rows=3, cols=3)
+
+        # Must have produced at least 1 cell and no more than 4 (2x2 fallback or 1x1)
+        self.assertGreaterEqual(len(cells), 1)
+        self.assertLessEqual(len(cells), 4)
+
+
+class TestGridResultToAreaCount(unittest.TestCase):
+    """Tests for grid_result_to_area_count() in extraction.py."""
+
+    def test_grid_result_to_area_count_preserves_totals(self):
+        """area_totals from GridResult must appear in counts_by_type of AreaCount."""
+        from takeoff.extraction import GridResult, CellTypeCount, grid_result_to_area_count
+
+        gr = GridResult(
+            area_label="Floor 1",
+            grid_cells=[],
+            cell_type_counts=[
+                CellTypeCount("A1", "A", 5),
+                CellTypeCount("A2", "A", 3),
+                CellTypeCount("A1", "B", 2),
+            ],
+            area_totals={"A": 8, "B": 2},
+        )
+        ac = grid_result_to_area_count(gr)
+
+        self.assertEqual(ac.area_label, "Floor 1")
+        self.assertEqual(ac.counts_by_type.get("A"), 8)
+        self.assertEqual(ac.counts_by_type.get("B"), 2)
+
+    def test_grid_result_to_area_count_collects_notes(self):
+        """Non-empty meaningful notes should appear; EXTRACTION_FAILED notes are filtered out."""
+        from takeoff.extraction import GridResult, CellTypeCount, grid_result_to_area_count
+
+        gr = GridResult(
+            area_label="Zone 2",
+            grid_cells=[],
+            cell_type_counts=[
+                CellTypeCount("A1", "C", 0, notes="EXTRACTION_FAILED"),
+                CellTypeCount("A2", "C", 1, notes="symbol partially cut off at edge"),
+                CellTypeCount("A3", "C", 1, notes=""),
+            ],
+            area_totals={"C": 2},
+        )
+        ac = grid_result_to_area_count(gr)
+        # EXTRACTION_FAILED notes are intentionally filtered out
+        self.assertNotIn("EXTRACTION_FAILED", ac.notes)
+        # Meaningful notes are included
+        self.assertIn("symbol partially cut off at edge", ac.notes)
+
+
+class TestCheckerGridPath(unittest.TestCase):
+    """Tests for the Checker grid cell verification path in agents.py."""
+
+    def test_checker_cell_disagreement_generates_cell_attack(self):
+        """When Checker vision returns a different count than Counter, a CELL attack is produced."""
+        import base64
+        import io
+        from unittest.mock import patch, MagicMock
+        from PIL import Image
+        from takeoff.extraction import (
+            GridResult, GridCell, CellTypeCount, FixtureSchedule,
+        )
+        from takeoff.agents import Checker
+
+        # Build a tiny white cell image
+        buf = io.BytesIO()
+        Image.new("RGB", (100, 100), "white").save(buf, format="PNG")
+        cell_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        cell_b2 = GridCell(
+            cell_id="B2", image_base64=cell_b64, row=1, col=1,
+            bounds={"x": 1/3, "y": 1/3, "width": 1/3, "height": 1/3},
+            area_label="Office Floor",
+        )
+        grid_result = GridResult(
+            area_label="Office Floor",
+            grid_cells=[cell_b2],
+            cell_type_counts=[CellTypeCount("B2", "A", 5)],
+            area_totals={"A": 5},
+        )
+        grid_results = {"Office Floor": grid_result}
+
+        fixture_schedule = FixtureSchedule()
+        fixture_schedule.fixtures["A"] = {"description": "2x4 LED Troffer"}
+
+        counter_output = {
+            "fixture_counts": [{"type_tag": "A", "total": 5, "counts_by_area": {"Office Floor": 5}}],
+            "grand_total_fixtures": 5,
+            "areas_covered": ["Office Floor"],
+        }
+
+        # Mock: vision client exists; _call_vision_with_retry returns checker count=3
+        mock_response = '{"type_tag": "A", "independent_count": 3, "agrees_with_counter": false, "discrepancy": -2, "notes": "Only 3 visible"}'
+        mock_client = MagicMock()
+        mock_router = MagicMock()
+        mock_router.complete.return_value = MagicMock(content='{"attacks": [], "total_attacks": 0, "critical_count": 0, "summary": "ok"}')
+
+        with patch("takeoff.agents._get_vision_client", return_value=mock_client), \
+             patch("takeoff.agents._call_vision_with_retry", return_value=mock_response):
+            checker = Checker(mock_router)
+            response = checker.generate_attacks(
+                counter_output=counter_output,
+                fixture_schedule=fixture_schedule,
+                area_counts=[],
+                plan_notes=[],
+                panel_data=None,
+                rcp_images=None,
+                grid_results=grid_results,
+            )
+
+        attacks = response.data.get("attacks", [])
+        cell_attacks = [a for a in attacks if a.get("attack_id", "").startswith("CELL")]
+        self.assertGreater(len(cell_attacks), 0, "Expected at least one CELL attack")
+        atk = cell_attacks[0]
+        self.assertEqual(atk.get("cell_id"), "B2")
+        self.assertEqual(atk.get("affected_type_tag"), "A")
+        self.assertIn("GRID CHECK", atk.get("description", ""))
+
+
+class TestEngineGridFlag(unittest.TestCase):
+    """Tests for use_grid=False bypassing gridded extraction in TakeoffEngine."""
+
+    def test_engine_use_grid_false_calls_extract_rcp_counts(self):
+        """With use_grid=False, engine must call extract_rcp_counts and NOT extract_rcp_counts_gridded."""
+        import base64
+        import io
+        from unittest.mock import patch, MagicMock
+        from PIL import Image
+        from takeoff.engine import TakeoffEngine
+        from takeoff.extraction import AreaCount, FixtureSchedule
+
+        # Build a minimal valid snippet image
+        buf = io.BytesIO()
+        Image.new("RGB", (200, 200), "white").save(buf, format="PNG")
+        img_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        snippets = [
+            {"id": "s1", "label": "fixture_schedule", "sub_label": "Schedule", "image_data": img_b64, "page_number": 1},
+            {"id": "s2", "label": "rcp", "sub_label": "Floor 1", "image_data": img_b64, "page_number": 1},
+        ]
+
+        fake_schedule = FixtureSchedule()
+        fake_schedule.fixtures["A"] = {"description": "2x4 LED Troffer"}
+        fake_area = AreaCount(area_label="Floor 1", counts_by_type={"A": 2})
+        fake_counter = MagicMock()
+        fake_counter.generate_count.return_value = MagicMock(
+            data={"fixture_counts": [{"type_tag": "A", "total": 2, "counts_by_area": {"Floor 1": 2}}],
+                  "grand_total_fixtures": 2, "areas_covered": ["Floor 1"]},
+            parse_error=False,
+        )
+        fake_checker = MagicMock()
+        fake_checker.generate_attacks.return_value = MagicMock(
+            data={"attacks": [], "total_attacks": 0, "critical_count": 0, "_model_failure": False},
+            raw_response="{}",
+        )
+        fake_judge = MagicMock()
+        fake_judge.evaluate.return_value = {
+            "verdict": "PASS", "violations": [], "flags": [], "ruling_summary": "ok"
+        }
+
+        with patch("takeoff.engine.extract_fixture_schedule", return_value=fake_schedule), \
+             patch("takeoff.engine.extract_rcp_counts", return_value=fake_area) as mock_rcp, \
+             patch("takeoff.engine.extract_rcp_counts_gridded") as mock_grid, \
+             patch("takeoff.engine.extract_plan_notes", return_value=[]), \
+             patch("takeoff.engine.extract_panel_schedule", return_value=None):
+
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+                db_path = f.name
+            engine = TakeoffEngine(db_path=db_path)
+            engine.counter = fake_counter
+            engine.checker = fake_checker
+            engine.judge = fake_judge
+
+            engine.run_takeoff(snippets, mode="fast", use_grid=False)
+
+        mock_rcp.assert_called()
+        mock_grid.assert_not_called()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Regression tests for grid bug fixes (Round 17)
+# ══════════════════════════════════════════════════════════════════════
+
+class TestCheckerGridDedupKey(unittest.TestCase):
+    """Regression: CELL attacks in the same area/type but different cells must NOT be collapsed."""
+
+    def test_multiple_cells_same_type_all_survive_dedup(self):
+        """Three CELL attacks for A in Floor 2 — cells A1, B2, C3 — must all survive deduplication."""
+        import base64
+        import io
+        from unittest.mock import patch, MagicMock
+        from PIL import Image
+        from takeoff.extraction import (
+            GridResult, GridCell, CellTypeCount, FixtureSchedule,
+        )
+        from takeoff.agents import Checker
+
+        buf = io.BytesIO()
+        Image.new("RGB", (100, 100), "white").save(buf, format="PNG")
+        cell_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        def _make_cell(cell_id, row, col):
+            return GridCell(
+                cell_id=cell_id, image_base64=cell_b64, row=row, col=col,
+                bounds={"x": col / 3, "y": row / 3, "width": 1/3, "height": 1/3},
+                area_label="Floor 2",
+            )
+
+        cells = [_make_cell("A1", 0, 0), _make_cell("B2", 1, 1), _make_cell("C3", 2, 2)]
+        grid_result = GridResult(
+            area_label="Floor 2",
+            grid_cells=cells,
+            cell_type_counts=[
+                CellTypeCount("A1", "A", 5),
+                CellTypeCount("B2", "A", 4),
+                CellTypeCount("C3", "A", 3),
+            ],
+            area_totals={"A": 12},
+        )
+        grid_results = {"Floor 2": grid_result}
+
+        fixture_schedule = FixtureSchedule()
+        fixture_schedule.fixtures["A"] = {"description": "2x4 LED Troffer"}
+
+        counter_output = {
+            "fixture_counts": [{"type_tag": "A", "total": 12, "counts_by_area": {"Floor 2": 12}}],
+            "grand_total_fixtures": 12,
+            "areas_covered": ["Floor 2"],
+        }
+
+        # Checker sees 3 in every cell vs Counter's 5/4/3 — all disagree
+        def _mock_vision(*args, **kwargs):
+            cell_img = args[3] if len(args) > 3 else kwargs.get("image_b64", "")
+            # Return count=3 for every cell (will disagree with counter's 5 and 4)
+            return '{"type_tag": "A", "independent_count": 3, "agrees_with_counter": false, "discrepancy": -2, "notes": "diff"}'
+
+        mock_client = MagicMock()
+        mock_router = MagicMock()
+        mock_router.complete.return_value = MagicMock(
+            content='{"attacks": [], "total_attacks": 0, "critical_count": 0, "summary": "ok"}'
+        )
+
+        with patch("takeoff.agents._get_vision_client", return_value=mock_client), \
+             patch("takeoff.agents._call_vision_with_retry", side_effect=_mock_vision):
+            checker = Checker(mock_router)
+            response = checker.generate_attacks(
+                counter_output=counter_output,
+                fixture_schedule=fixture_schedule,
+                area_counts=[],
+                plan_notes=[],
+                panel_data=None,
+                rcp_images=None,
+                grid_results=grid_results,
+            )
+
+        attacks = response.data.get("attacks", [])
+        cell_attacks = [a for a in attacks if (a.get("attack_id") or "").startswith("CELL")]
+        # All three cell attacks must survive — dedup must not collapse them
+        cell_ids_attacked = {a.get("cell_id") for a in cell_attacks}
+        # A1 and B2 disagree (checker=3, counter=5 and 4). C3 agrees (checker=3, counter=3).
+        # So at minimum A1 and B2 must appear.
+        self.assertIn("A1", cell_ids_attacked, "A1 CELL attack must survive dedup")
+        self.assertIn("B2", cell_ids_attacked, "B2 CELL attack must survive dedup")
+        self.assertGreaterEqual(len(cell_attacks), 2, "At least 2 distinct CELL attacks must survive dedup")
+
+
+class TestCheckerGridFallbackCoverage(unittest.TestCase):
+    """Regression: When an area falls back from grid to full-image, Checker still gets rcp_images for it."""
+
+    def test_fallback_area_passed_to_checker_as_rcp_image(self):
+        """Engine must collect fallback areas and pass them as rcp_images to Checker."""
+        import base64
+        import io
+        from unittest.mock import patch, MagicMock, call
+        from PIL import Image
+        from takeoff.engine import TakeoffEngine
+        from takeoff.extraction import AreaCount, FixtureSchedule, GridResult, GridCell
+
+        buf = io.BytesIO()
+        Image.new("RGB", (200, 200), "white").save(buf, format="PNG")
+        img_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        snippets = [
+            {"id": "s1", "label": "fixture_schedule", "sub_label": "Schedule", "image_data": img_b64, "page_number": 1},
+            {"id": "s2", "label": "rcp", "sub_label": "Good Area", "image_data": img_b64, "page_number": 1},
+            {"id": "s3", "label": "rcp", "sub_label": "Bad Area", "image_data": img_b64, "page_number": 2},
+        ]
+
+        fake_schedule = FixtureSchedule()
+        fake_schedule.fixtures["A"] = {"description": "2x4 LED Troffer"}
+
+        # Good Area succeeds grid extraction; Bad Area raises RuntimeError (triggers fallback)
+        good_cell = GridCell("A1", img_b64, 0, 0, {"x": 0, "y": 0, "width": 1, "height": 1}, "Good Area")
+        good_grid = GridResult("Good Area", [good_cell], [], {"A": 3}, [])
+        good_area = AreaCount("Good Area", {"A": 3})
+        bad_area_full = AreaCount("Bad Area", {"A": 2})
+
+        def _gridded_side_effect(snippet_image, fixture_schedule, area_label, **kwargs):
+            if area_label == "Bad Area":
+                raise RuntimeError("Simulated grid failure for Bad Area")
+            return good_grid
+
+        fake_counter = MagicMock()
+        fake_counter.generate_count.return_value = MagicMock(
+            data={"fixture_counts": [{"type_tag": "A", "total": 5, "counts_by_area": {"Good Area": 3, "Bad Area": 2}}],
+                  "grand_total_fixtures": 5, "areas_covered": ["Good Area", "Bad Area"]},
+            parse_error=False,
+        )
+        fake_checker = MagicMock()
+        fake_checker.generate_attacks.return_value = MagicMock(
+            data={"attacks": [], "total_attacks": 0, "critical_count": 0, "_model_failure": False},
+            raw_response="{}",
+        )
+        fake_judge = MagicMock()
+        fake_judge.evaluate.return_value = {
+            "verdict": "PASS", "violations": [], "flags": [], "ruling_summary": "ok"
+        }
+
+        with patch("takeoff.engine.extract_fixture_schedule", return_value=fake_schedule), \
+             patch("takeoff.engine.extract_rcp_counts_gridded", side_effect=_gridded_side_effect), \
+             patch("takeoff.engine.extract_rcp_counts", return_value=bad_area_full), \
+             patch("takeoff.engine.extract_plan_notes", return_value=[]), \
+             patch("takeoff.engine.extract_panel_schedule", return_value=None):
+
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+                db_path = f.name
+            engine = TakeoffEngine(db_path=db_path)
+            engine.counter = fake_counter
+            engine.checker = fake_checker
+            engine.judge = fake_judge
+
+            engine.run_takeoff(snippets, mode="fast", use_grid=True)
+
+        # Checker must have been called with rcp_images containing the fallback area
+        call_kwargs = fake_checker.generate_attacks.call_args
+        rcp_images_arg = call_kwargs.kwargs.get("rcp_images") or (
+            call_kwargs.args[5] if len(call_kwargs.args) > 5 else None
+        )
+        self.assertIsNotNone(rcp_images_arg, "rcp_images must be passed to Checker for fallback area")
+        fallback_labels = [img.get("area_label") for img in rcp_images_arg]
+        self.assertIn("Bad Area", fallback_labels, "Bad Area must appear in rcp_images passed to Checker")
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Entry point
 # ══════════════════════════════════════════════════════════════════════
 
