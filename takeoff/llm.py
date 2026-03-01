@@ -46,6 +46,7 @@ class LLMResponse:
 COST_PER_1K = {
     "claude-haiku-4-5-20251001": {"input": 0.001, "output": 0.005},
     "claude-sonnet-4-20250514": {"input": 0.003, "output": 0.015},
+    "claude-sonnet-4-6": {"input": 0.003, "output": 0.015},
 }
 
 

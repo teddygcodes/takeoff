@@ -282,6 +282,12 @@ class TakeoffDB:
             # Update with reconciler responses
             for resp in reconciler_responses:
                 attack_id = resp.get("attack_id")
+                if attack_id is None:
+                    logger.warning(
+                        "[DB] Reconciler response has None attack_id for job '%s' — skipping",
+                        job_id
+                    )
+                    continue
                 verdict = resp.get("verdict")
                 explanation = resp.get("explanation")
                 cur = self.conn.execute("""

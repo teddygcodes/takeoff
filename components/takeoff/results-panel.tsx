@@ -171,6 +171,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
         role="tablist"
         onKeyDown={(e) => {
           const idx = tabs.findIndex((t) => t.key === activeTab);
+          if (idx === -1) return;
           if (e.key === "ArrowRight") setActiveTab(tabs[(idx + 1) % tabs.length].key);
           else if (e.key === "ArrowLeft") setActiveTab(tabs[(idx - 1 + tabs.length) % tabs.length].key);
         }}
