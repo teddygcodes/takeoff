@@ -874,24 +874,19 @@ class TakeoffEngine:
             }
         }
         if grid_results:
-            # Build canonical cell list from the first area's actual dimensions.
-            # We cannot concatenate cells across all areas — each area shares the same
-            # cell IDs (A1–C3) so concatenation produces duplicates and the :9 cap
-            # silently drops any second area. Derive from actual grid dimensions instead.
-            _first_gr = next(iter(grid_results.values()))
-            if _first_gr.grid_cells:
-                _actual_rows = max(c.row for c in _first_gr.grid_cells) + 1
-                _actual_cols = max(c.col for c in _first_gr.grid_cells) + 1
-            else:
-                _actual_rows, _actual_cols = grid_rows, grid_cols
-            _canonical_cells = [
-                chr(ord("A") + r) + str(c + 1)
-                for r in range(_actual_rows)
-                for c in range(_actual_cols)
-            ]
-            result["grid_config"] = {
-                "rows": _actual_rows,
-                "cols": _actual_cols,
-                "cells": _canonical_cells,
-            }
+            # Per-area grid config — each area may have a different actual grid size
+            # due to auto-reduction when images are too small (generate_grid() reduces
+            # rows/cols independently). Using first area only would misrepresent jobs
+            # where some areas fell back to a smaller grid.
+            _per_area_config: Dict[str, dict] = {}
+            for _gr_label, _gr in grid_results.items():
+                if _gr.grid_cells:
+                    _ar = max(c.row for c in _gr.grid_cells) + 1
+                    _ac = max(c.col for c in _gr.grid_cells) + 1
+                    _cells = [_gc.cell_id for _gc in _gr.grid_cells]
+                else:
+                    _ar, _ac = grid_rows, grid_cols
+                    _cells = [chr(ord("A") + r) + str(c + 1) for r in range(_ar) for c in range(_ac)]
+                _per_area_config[_gr_label] = {"rows": _ar, "cols": _ac, "cells": _cells}
+            result["grid_config"] = _per_area_config if _per_area_config else None
         return result

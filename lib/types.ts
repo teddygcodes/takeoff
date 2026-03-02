@@ -85,11 +85,11 @@ export interface TakeoffResult {
   constitutional_violations: Violation[];
   flags?: string[];
   ruling_summary?: string;
-  grid_config?: {
+  grid_config?: Record<string, {
     rows: number;
     cols: number;
     cells: string[];
-  } | null;
+  }> | null;
 }
 
 export interface PipelineStep {

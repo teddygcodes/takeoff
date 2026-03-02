@@ -254,17 +254,19 @@ checker_response = self.checker.generate_attacks(
 ### `_build_result()` New Fields
 
 ```python
-# Per fixture entry — cell_counts aggregated across all grid areas:
-fixture_entry["cell_counts"] = {cell_id: count, ...}  # or None if no grid
+# Per fixture entry — cell_counts aggregated across all grid areas.
+# Key format: "AreaLabel/CellID" to prevent collision when multiple areas
+# share identical cell IDs (e.g. "A1" in Floor 2 vs "A1" in Floor 3).
+fixture_entry["cell_counts"] = {"Floor 2/A1": 3, "Floor 3/A1": 2, ...}  # or None if no grid
 
 # Per adversarial log entry:
 log_entry["cell_id"] = attack.get("cell_id")  # None for non-cell attacks
 
-# Top-level result when grid was used:
+# Top-level result when grid was used — per-area dict (each area may have
+# different actual grid size due to auto-reduction on small images):
 result["grid_config"] = {
-    "rows": grid_rows,
-    "cols": grid_cols,
-    "cells": ["A1", "A2", ..., "C3"]  # capped at 9
+    "Floor 2 North Wing": {"rows": 3, "cols": 3, "cells": ["A1", "A2", ..., "C3"]},
+    "Lobby": {"rows": 2, "cols": 2, "cells": ["A1", "A2", "B1", "B2"]},
 }
 ```
 
@@ -296,6 +298,12 @@ The new path uses `if grid_results:` (not `elif`) — both grid and full-image p
 **Inner function `_check_cell_type()` — all prompt values f-string interpolated:**
 
 ```python
+# schedule_context built once before tasks, used in every cell prompt:
+_sched_ctx = "\n".join(
+    f"  {t}: {(i.get('description', '') if isinstance(i, dict) else str(i))}"
+    for t, i in fixture_schedule.fixtures.items()
+)
+
 def _check_cell_type(area_label, cell, type_tag, type_desc, counter_count):
     gr = grid_results[area_label]
     n_rows = max(c.row for c in gr.grid_cells) + 1 if gr.grid_cells else 3
@@ -310,6 +318,8 @@ def _check_cell_type(area_label, cell, type_tag, type_desc, counter_count):
         f"1. Count ONLY Type {type_tag}. Ignore all other types.\n"
         f"2. Count if center or >50% of symbol is in this cell.\n"
         f"3. Be independent — do not assume Counter is correct.\n\n"
+        f"FIXTURE SCHEDULE (for type disambiguation — do NOT count other types):\n"
+        f"{_sched_ctx}\n\n"
         f"Respond ONLY valid JSON:\n"
         f"{{\"type_tag\": \"{type_tag}\", \"independent_count\": <int>, "
         f"\"agrees_with_counter\": true|false, \"discrepancy\": <int>, \"notes\": \"...\"}}"
@@ -430,6 +440,15 @@ tests/test_takeoff_pipeline.py:
 
   TestEngineGridFlag::test_engine_use_grid_false_calls_extract_rcp_counts
     — use_grid=False → extract_rcp_counts called; extract_rcp_counts_gridded NOT called
+
+  TestEngineGridFlag::test_engine_all_areas_fallback_checker_still_runs
+    — all areas fail grid → fallback to extract_rcp_counts; grid_config absent from result
+
+  TestCheckerGridDedupKey::test_multiple_cells_same_type_all_survive_dedup
+    — CELL attacks for same (type, area) but different cells must NOT collapse (Round 17 regression)
+
+  TestCheckerGridFallbackCoverage::test_fallback_area_passed_to_checker_as_rcp_image
+    — partial grid fallback: fallback area passed as rcp_images to Checker (Round 17 regression)
 ```
 
 **Test results:** 217 Python passed, 1 skipped; 9 frontend passed; `npm run build` clean; `npm run lint` clean (1 pre-existing `no-img-element` warning)
