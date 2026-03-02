@@ -43,6 +43,15 @@ class TestFormatForFrontend(unittest.TestCase):
         out = _format_for_frontend({"confidence_breakdown": bd})
         self.assertEqual(out["confidence_breakdown"], bd)
 
+    def test_grid_config_passes_through(self):
+        gc = {"Floor 2": {"rows": 3, "cols": 3, "cells": ["A1", "A2", "B1", "B2", "C1", "C2"]}}
+        out = _format_for_frontend({"grid_config": gc})
+        self.assertEqual(out["grid_config"], gc)
+
+    def test_grid_config_none_passes_through(self):
+        out = _format_for_frontend({"grid_config": None})
+        self.assertIsNone(out["grid_config"])
+
     def test_empty_input_all_keys_with_defaults(self):
         out = _format_for_frontend({})
         expected_keys = {
@@ -50,7 +59,7 @@ class TestFormatForFrontend(unittest.TestCase):
             "confidence_band", "confidence_score", "confidence_breakdown",
             "confidence_explanation", "judge_verdict", "constitutional_violations",
             "flags", "ruling_summary", "adversarial_log", "agent_counts",
-            "latency_ms", "cost_usd",
+            "latency_ms", "cost_usd", "grid_config",
         }
         self.assertEqual(set(out.keys()), expected_keys)
         self.assertEqual(out["grand_total"], 0)

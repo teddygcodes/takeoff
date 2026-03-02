@@ -808,14 +808,15 @@ class TakeoffEngine:
                 area_flags = []
 
             # Aggregate per-cell counts for this type across all grid areas.
-            # Key format: "AreaLabel/CellID" — prevents collision when multiple areas
-            # share identical cell IDs (e.g. "A1" in Floor2 vs "A1" in Floor3).
+            # Key format: "AreaLabel::CellID" — the "::" separator is unambiguous
+            # even when area labels contain "/" (e.g. "Floor 2/North" is safe).
+            # Cell IDs (A1–Z9) never contain "::".
             cell_counts: Dict = {}
             if grid_results:
                 for gr in grid_results.values():
                     for ctc in gr.cell_type_counts:
                         if ctc.type_tag == tag:
-                            k = f"{gr.area_label}/{ctc.cell_id}"
+                            k = f"{gr.area_label}::{ctc.cell_id}"
                             cell_counts[k] = cell_counts.get(k, 0) + ctc.count
 
             fixture_table.append({

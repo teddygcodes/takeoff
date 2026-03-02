@@ -531,7 +531,7 @@ Return JSON ONLY — no explanatory text:
                             _counter_count = ctc_map.get((_cell.cell_id, _type_tag), 0)
                             tasks.append((_area_label, _cell, _type_tag, _type_desc, _counter_count))
 
-                max_vis = min(len(tasks), API_CONFIG.get("vision_max_workers", 4) * 2) if tasks else 0
+                max_vis = min(10, len(tasks), API_CONFIG.get("vision_max_workers", 4) * 2) if tasks else 0
                 task_results = [None] * len(tasks)
                 if max_vis > 0:
                     with ThreadPoolExecutor(max_workers=max_vis) as _vis_ex:
@@ -568,7 +568,7 @@ Return JSON ONLY — no explanatory text:
                         "category": "cell_count_mismatch",
                         "description": (
                             f"[GRID CHECK] Cell {_c_id} of area '{_a_label}': "
-                            f"Counter counted {_c_count} \u00d7 Type {_t_tag}, "
+                            f"Extraction counted {_c_count} \u00d7 Type {_t_tag}, "
                             f"Checker found {_ck_count} (diff: {_disc:+d})"
                         ),
                         "affected_type_tag": _t_tag,

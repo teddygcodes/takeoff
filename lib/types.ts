@@ -34,7 +34,7 @@ export interface FixtureRow {
   difficulty: string;
   flags?: string[];
   counts_by_area?: Record<string, number>;
-  cell_counts?: Record<string, number> | null;
+  cell_counts?: Record<string, number> | null;  // key: "AreaLabel::CellID" (e.g. "Floor 2::A1")
   notes?: string;
   accessories?: string[];
 }

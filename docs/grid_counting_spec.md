@@ -255,9 +255,9 @@ checker_response = self.checker.generate_attacks(
 
 ```python
 # Per fixture entry — cell_counts aggregated across all grid areas.
-# Key format: "AreaLabel/CellID" to prevent collision when multiple areas
-# share identical cell IDs (e.g. "A1" in Floor 2 vs "A1" in Floor 3).
-fixture_entry["cell_counts"] = {"Floor 2/A1": 3, "Floor 3/A1": 2, ...}  # or None if no grid
+# Key format: "AreaLabel::CellID" — "::" separator is unambiguous even when
+# area labels contain "/" (e.g. "Floor 2/North"). Cell IDs never contain "::".
+fixture_entry["cell_counts"] = {"Floor 2::A1": 3, "Floor 3::A1": 2, ...}  # or None if no grid
 
 # Per adversarial log entry:
 log_entry["cell_id"] = attack.get("cell_id")  # None for non-cell attacks
@@ -362,7 +362,7 @@ severity = "critical" if abs_d >= threshold_critical else "major" if abs_d >= 2 
 ```typescript
 interface FixtureRow {
   // ... existing fields ...
-  cell_counts?: Record<string, number> | null;  // NEW
+  cell_counts?: Record<string, number> | null;  // NEW — key format: "AreaLabel::CellID"
 }
 
 interface AdversarialEntry {
@@ -372,11 +372,13 @@ interface AdversarialEntry {
 
 interface TakeoffResult {
   // ... existing fields ...
-  grid_config?: {            // NEW
+  // Per-area dict — each area may have a different actual grid size due to auto-reduction.
+  // Updated Round 18: was a single object {rows, cols, cells}; now keyed by area label.
+  grid_config?: Record<string, {
     rows: number;
     cols: number;
-    cells: string[];
-  } | null;
+    cells: string[];  // e.g. ["A1", "A2", "A3", "B1", "B2", "B3", "C1", "C2", "C3"]
+  }> | null;
 }
 ```
 

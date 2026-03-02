@@ -89,6 +89,13 @@ const DIFF_LABELS: Record<string, string> = {
   E: "Extreme",
 };
 
+function parseCellKey(key: string): { area: string; cellId: string } {
+  const sep = key.indexOf("::");
+  return sep >= 0
+    ? { area: key.slice(0, sep), cellId: key.slice(sep + 2) }
+    : { area: key, cellId: "?" };
+}
+
 export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: ResultsPanelProps) {
   const [activeTab, setActiveTab] = useState<"counts" | "adversarial" | "confidence" | "export">("counts");
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
@@ -283,6 +290,43 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
                                 </div>
                               </div>
                             )}
+                            {Object.keys(f.cell_counts || {}).length > 0 && (() => {
+                              const cellsByArea: Record<string, Array<{ cellId: string; count: number }>> = {};
+                              for (const [key, count] of Object.entries(f.cell_counts!)) {
+                                const { area, cellId } = parseCellKey(key);
+                                (cellsByArea[area] ??= []).push({ cellId, count });
+                              }
+                              for (const arr of Object.values(cellsByArea)) {
+                                arr.sort((a, b) => a.cellId.localeCompare(b.cellId));
+                              }
+                              return (
+                                <div className="mt-2">
+                                  <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                    Grid Cell Counts
+                                  </p>
+                                  {Object.entries(cellsByArea).map(([area, cells]) => (
+                                    <div key={area} className="mb-2">
+                                      <p className="mb-1 text-[11px] font-medium text-muted-foreground">{area}</p>
+                                      <div className="flex flex-wrap gap-1">
+                                        {cells.map(({ cellId, count }) => (
+                                          <span
+                                            key={cellId}
+                                            className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[11px] ${
+                                              count === 0
+                                                ? "border-border bg-muted text-muted-foreground"
+                                                : "border-purple-200 bg-purple-50 text-purple-800"
+                                            }`}
+                                          >
+                                            <span className="font-semibold">{cellId}</span>
+                                            <span>{count}</span>
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            })()}
                             {f.notes && (
                               <p className="text-xs text-muted-foreground">
                                 <span className="font-semibold">Notes:</span> {f.notes}
@@ -359,6 +403,11 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
                       {entry.category && (
                         <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
                           {entry.category.replace(/_/g, " ")}
+                        </span>
+                      )}
+                      {entry.cell_id && (
+                        <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[11px] font-semibold text-purple-700">
+                          GRID {entry.cell_id}
                         </span>
                       )}
                       <span className="font-mono text-[11px] text-muted-foreground">{entry.attack_id}</span>
@@ -542,6 +591,23 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
                 {copied ? "Copied!" : copyError ? "Copy failed" : "Copy to Clipboard"}
               </button>
             </div>
+
+            {/* Grid mode summary */}
+            {data.grid_config && Object.keys(data.grid_config).length > 0 && (
+              <div className="mb-6 rounded-lg border border-purple-200 bg-purple-50 p-4">
+                <p className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-purple-700">
+                  Grid Mode Active
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(data.grid_config).map(([area, cfg]) => (
+                    <span key={area} className="rounded border border-purple-200 bg-white px-2.5 py-1 text-xs text-purple-800">
+                      <span className="font-medium">{area}</span>
+                      <span className="ml-1.5 font-mono text-purple-600">{cfg.rows}×{cfg.cols}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Preview */}
             <div className="rounded-lg border border-border bg-sidebar p-4">

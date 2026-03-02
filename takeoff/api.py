@@ -284,7 +284,8 @@ def _format_for_frontend(result: dict) -> dict:
         "adversarial_log": result.get("adversarial_log", []),
         "agent_counts": result.get("agent_counts", {}),
         "latency_ms": result.get("latency_ms", 0),
-        "cost_usd": result.get("cost_usd", 0.0)
+        "cost_usd": result.get("cost_usd", 0.0),
+        "grid_config": result.get("grid_config"),
     }
 
 
