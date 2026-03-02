@@ -300,7 +300,7 @@ class TestConfidenceCalculation(unittest.TestCase):
             has_plan_notes=True,
             notes_addressed=True,
         )
-        self.assertLessEqual(result["score"], 0.26, f"FATAL should force score ≤ 0.25, got {result['score']}")
+        self.assertLessEqual(result["score"], 0.25, f"FATAL should force score ≤ 0.25, got {result['score']}")
 
     def test_confidence_score_clamped(self):
         """Score must always be in [0.0, 1.0]."""

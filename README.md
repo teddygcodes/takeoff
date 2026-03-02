@@ -167,7 +167,7 @@ takeoff/
 │   ├── constitution.py     # Hard rules and articles
 │   ├── confidence.py       # Feature-based scoring
 │   └── schema.py           # SQLite persistence
-└── tests/                  # 237 unit and integration tests
+└── tests/                  # 265 unit and integration tests
 ```
 
 ---

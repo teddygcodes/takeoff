@@ -697,7 +697,8 @@ def generate_grid(
     # Strip data URI prefix if present
     raw_b64 = image_base64
     if raw_b64.startswith("data:"):
-        raw_b64 = raw_b64.split(",", 1)[1]
+        parts = raw_b64.split(",", 1)
+        raw_b64 = parts[1] if len(parts) > 1 else raw_b64
 
     img = _PilImage.open(io.BytesIO(base64.b64decode(raw_b64))).convert("RGB")
     w, h = img.size
@@ -844,11 +845,11 @@ def extract_rcp_counts_gridded(
     """
     cells = generate_grid(snippet_image, area_label, grid_rows, grid_cols)
 
-    # Build fixture type list (skip empty descriptions)
+    # Build fixture type list (skip non-dict entries and entries with empty descriptions)
     type_items = [
-        (tag, info.get("description", "") if isinstance(info, dict) else "")
+        (tag, info.get("description", ""))
         for tag, info in fixture_schedule.fixtures.items()
-        if info and (info.get("description") if isinstance(info, dict) else True)
+        if isinstance(info, dict) and info.get("description")
     ]
 
     if not type_items:

@@ -7,6 +7,7 @@ import logging
 import os
 import json
 import asyncio
+import secrets
 
 logger = logging.getLogger(__name__)
 from contextlib import asynccontextmanager
@@ -122,7 +123,7 @@ async def api_key_guard(request: Request, call_next):
         _normalized_path = request.url.path.rstrip("/").lower() or "/"
         if _normalized_path not in ("/takeoff/health", "/"):
             provided = request.headers.get("X-API-Key", "")
-            if provided != _TAKEOFF_API_KEY:
+            if not secrets.compare_digest(provided, _TAKEOFF_API_KEY):
                 return JSONResponse(status_code=403, content={"detail": "Invalid or missing API key"})
     return await call_next(request)
 

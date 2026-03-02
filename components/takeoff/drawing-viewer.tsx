@@ -89,9 +89,12 @@ export function DrawingViewer({
   const snipModeRef = useRef(snipMode);
   useEffect(() => { snipModeRef.current = snipMode; }, [snipMode]);
 
-  // Clear pending rect when snip mode is toggled off or page changes
+  // Clear pending rect when snip mode is toggled off or page changes.
+  // setState calls here are intentional: they sync derived cleanup state
+  // (pending selection must be null when mode/page changes).
   useEffect(() => {
     if (!snipMode) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPendingRect(null);
       pendingRectRef.current = null;
       dragHandleRef.current = -1;
@@ -99,6 +102,7 @@ export function DrawingViewer({
     }
   }, [snipMode]);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPendingRect(null);
     pendingRectRef.current = null;
     dragHandleRef.current = -1;
@@ -448,7 +452,9 @@ export function DrawingViewer({
       const tmp = document.createElement("canvas");
       tmp.width = sw;
       tmp.height = sh;
-      tmp.getContext("2d")!.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+      const tmpCtx = tmp.getContext("2d");
+      if (!tmpCtx) return;
+      tmpCtx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
       // Cap at 1600px on longest side to reduce Claude Vision token cost
       const MAX_PX = 1600;
       let finalCanvas: HTMLCanvasElement = tmp;
@@ -457,7 +463,9 @@ export function DrawingViewer({
         const scaled = document.createElement("canvas");
         scaled.width = Math.round(sw * scale);
         scaled.height = Math.round(sh * scale);
-        scaled.getContext("2d")!.drawImage(tmp, 0, 0, scaled.width, scaled.height);
+        const scaledCtx = scaled.getContext("2d");
+        if (!scaledCtx) return;
+        scaledCtx.drawImage(tmp, 0, 0, scaled.width, scaled.height);
         finalCanvas = scaled;
       }
       imageData = finalCanvas.toDataURL("image/jpeg", 0.85).split(",")[1] ?? "";
@@ -503,6 +511,7 @@ export function DrawingViewer({
           <button
             key={pg}
             onClick={() => onPageChange(pg)}
+            aria-label={`Go to page ${pg}`}
             aria-current={pg === currentPage ? "page" : undefined}
             className={`relative rounded-lg border-2 p-1 transition-all ${
               pg === currentPage
@@ -839,8 +848,7 @@ export function DrawingViewer({
             >
               <button
                 onClick={captureAndConfirm}
-                className="rounded px-2.5 py-1 text-xs font-semibold text-white shadow"
-                style={{ backgroundColor: "var(--accent)" }}
+                className="rounded bg-accent px-2.5 py-1 text-xs font-semibold text-white shadow hover:bg-accent-hover"
               >
                 Confirm
               </button>

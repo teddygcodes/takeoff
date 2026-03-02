@@ -160,8 +160,7 @@ export function SnippetTray({
                   </p>
                   <button
                     onClick={onActivateSnip}
-                    className="w-full rounded-md py-2 text-xs font-semibold text-white transition-colors"
-                    style={{ backgroundColor: "var(--accent)" }}
+                    className="w-full rounded-md bg-accent py-2 text-xs font-semibold text-white transition-colors hover:bg-accent-hover"
                   >
                     {isStep1 ? "Snip Fixture Schedule" : hasRcp ? "+ Snip Another Area" : "Snip RCP Area"}
                   </button>
@@ -182,6 +181,7 @@ export function SnippetTray({
                     onClick={() => toggleSection(labelKey)}
                     className="flex w-full items-center gap-2 px-1 py-1.5 text-left"
                     aria-expanded={!collapsed}
+                    aria-controls={`section-${labelKey}`}
                     aria-label={`Toggle ${info?.title || labelKey} section`}
                   >
                     <span className="text-xs text-muted-foreground">
@@ -193,7 +193,7 @@ export function SnippetTray({
                   </button>
 
                   {!collapsed && (
-                    <>
+                    <div id={`section-${labelKey}`}>
                       {count === 0 ? (
                         <p className="px-3 py-2 text-xs italic text-muted-foreground/60">
                           {"No " + (info?.title.toLowerCase() || labelKey) + " yet"}
@@ -294,7 +294,7 @@ export function SnippetTray({
                           </div>
                         ))
                       )}
-                    </>
+                    </div>
                   )}
                 </div>
               );
@@ -333,10 +333,9 @@ export function SnippetTray({
           <button
             onClick={() => ready && !isRunning && onRunTakeoff(mode)}
             disabled={!ready || isRunning}
-            className="flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
-            style={{
-              backgroundColor: ready && !isRunning ? "var(--accent)" : undefined,
-            }}
+            className={`flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground ${
+              ready && !isRunning ? "bg-accent text-white hover:bg-accent-hover" : ""
+            }`}
             title={!ready ? "Add at least 1 fixture schedule and 1 RCP area" : undefined}
           >
             {isRunning ? (
