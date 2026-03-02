@@ -8,4 +8,11 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   echo "Error: ANTHROPIC_API_KEY is not set. Export it or add it to a .env file."
   exit 1
 fi
-uvicorn takeoff.api:app --host 0.0.0.0 --port 8001
+uvicorn takeoff.api:app \
+  --host 0.0.0.0 \
+  --port 8001 \
+  --workers 1 \
+  --timeout-keep-alive 300
+# --workers 1: required — extraction.py and llm.py use module-level globals
+#   (_vision_client, _vision_input_tokens, LRU cache) that break with multiple workers.
+# --timeout-keep-alive 300: grid extraction runs 60–120s; default 5s drops connections.

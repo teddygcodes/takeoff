@@ -31,7 +31,7 @@ API_CONFIG = {
     "rate_limit_seconds": _env_float("RATE_LIMIT_SECONDS", 1.0),
     "rate_limit_enabled": os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true",
     "temperature_research": _env_float("TEMPERATURE_RESEARCH", 0.3),
-    "vision_max_workers": _env_int("VISION_MAX_WORKERS", 4),
+    "vision_max_workers": max(1, _env_int("VISION_MAX_WORKERS", 4)),
 }
 
 # ─── Model IDs ────────────────────────────────────────────────────────────────

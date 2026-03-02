@@ -1,13 +1,19 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-
-let _snippetSeq = 0;
 import Link from "next/link";
 import { DrawingViewer, type SnippetData } from "@/components/takeoff/drawing-viewer";
 import { SnippetTray } from "@/components/takeoff/snippet-tray";
 import { ResultsPanel, type TakeoffResultData } from "@/components/takeoff/results-panel";
 import type { SnippetLabel } from "@/lib/types";
+
+const VALID_SNIPPET_LABELS: readonly string[] = [
+  "fixture_schedule", "rcp", "panel_schedule", "plan_notes", "detail", "site_plan",
+];
+
+function isSnippetLabel(v: string): v is SnippetLabel {
+  return VALID_SNIPPET_LABELS.includes(v);
+}
 
 type PanelMode = "workspace" | "results";
 
@@ -20,6 +26,7 @@ export default function TakeoffPage() {
   const [panelMode, setPanelMode] = useState<PanelMode>("workspace");
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const snippetSeqRef = useRef(0);
 
   // DrawingViewer controlled state
   const [pageCount, setPageCount] = useState(0);
@@ -40,7 +47,7 @@ export default function TakeoffPage() {
     (id: string, label: string, subLabel: string) => {
       setSnippets((prev) =>
         prev.map((s) =>
-          s.id === id ? { ...s, label: label as SnippetLabel, sub_label: subLabel } : s
+          s.id === id ? { ...s, label: isSnippetLabel(label) ? label : s.label, sub_label: subLabel } : s
         )
       );
     },
@@ -229,7 +236,7 @@ export default function TakeoffPage() {
                 onToggleSnip={() => setSnipMode((m) => !m)}
                 onSnipComplete={(bbox, imageData) => {
                   const snippet: SnippetData = {
-                    id: `s${Date.now()}_${++_snippetSeq}`,
+                    id: `s${Date.now()}_${++snippetSeqRef.current}`,
                     label: "fixture_schedule",
                     sub_label: "",
                     page_number: currentPage,

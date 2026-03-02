@@ -21,6 +21,7 @@ import os
 import uuid
 import tempfile
 import unittest
+import pytest
 
 # Add repo root to path so imports work without installing
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -519,6 +520,7 @@ class TestEnginePipelineValidation(unittest.TestCase):
         finally:
             os.unlink(db_path)
 
+    @pytest.mark.live
     @unittest.skipUnless(
         os.environ.get("ANTHROPIC_API_KEY"),
         "Skipped: set ANTHROPIC_API_KEY to run live pipeline tests",

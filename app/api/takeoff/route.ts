@@ -29,6 +29,12 @@ const TAKEOFF_API_URL = (() => {
 
 const VALID_MODES = new Set(["fast", "strict", "liability"]);
 
+function isValidSnippet(s: unknown): boolean {
+  if (typeof s !== "object" || s === null) return false;
+  const o = s as Record<string, unknown>;
+  return typeof o.label === "string" && typeof o.bbox === "object" && o.bbox !== null;
+}
+
 export async function POST(req: NextRequest) {
   let body: unknown;
   try {
@@ -52,6 +58,14 @@ export async function POST(req: NextRequest) {
   ) {
     return new Response(
       `data: ${JSON.stringify({ type: "error", message: "Request must include snippets (array) and mode (fast|strict|liability); drawing_name must be a string ≤255 chars" })}\n\n`,
+      { status: 400, headers: { "Content-Type": "text/event-stream" } }
+    );
+  }
+
+  const badSnippetIdx = (b.snippets as unknown[]).findIndex((s) => !isValidSnippet(s));
+  if (badSnippetIdx >= 0) {
+    return new Response(
+      `data: ${JSON.stringify({ type: "error", message: `Snippet at index ${badSnippetIdx} is missing required fields (label, bbox)` })}\n\n`,
       { status: 400, headers: { "Content-Type": "text/event-stream" } }
     );
   }
