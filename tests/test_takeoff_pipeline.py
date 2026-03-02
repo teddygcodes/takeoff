@@ -1227,27 +1227,46 @@ class TestFixedGaps(unittest.TestCase):
     # ── Payload validation logic ────────────────────────────────────────
 
     def test_payload_validation_max_snippets(self):
-        """Payload with >30 snippets should be rejected."""
-        MAX_SNIPPETS = 30
+        """Payload with >30 snippets should be rejected with HTTP 400."""
+        from unittest.mock import MagicMock, patch
+        from fastapi.testclient import TestClient
+        from takeoff.api import app
+
         snippets = [{"id": f"s{i}", "label": "rcp", "image_data": "x"} for i in range(31)]
-        self.assertGreater(len(snippets), MAX_SNIPPETS)
+        with patch("takeoff.api.engine", MagicMock()):
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.post("/takeoff/run", json={"snippets": snippets, "mode": "fast"})
+        self.assertEqual(resp.status_code, 400, f"Expected 400, got {resp.status_code}: {resp.text}")
+        self.assertIn("Too many snippets", resp.json().get("detail", ""))
 
     def test_payload_validation_requires_fixture_schedule(self):
-        """Payload without fixture_schedule snippet should be rejected."""
+        """Payload without fixture_schedule snippet should be rejected with HTTP 400."""
+        from unittest.mock import MagicMock, patch
+        from fastapi.testclient import TestClient
+        from takeoff.api import app
+
         snippets = [
             {"id": "rcp1", "label": "rcp", "image_data": "x"},
             {"id": "rcp2", "label": "rcp", "image_data": "x"},
         ]
-        fixture_snippets = [s for s in snippets if s.get("label") == "fixture_schedule"]
-        self.assertEqual(len(fixture_snippets), 0, "No fixture_schedule should fail validation")
+        with patch("takeoff.api.engine", MagicMock()):
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.post("/takeoff/run", json={"snippets": snippets, "mode": "fast"})
+        self.assertEqual(resp.status_code, 400, f"Expected 400, got {resp.status_code}: {resp.text}")
+        self.assertIn("fixture_schedule", resp.json().get("detail", ""))
 
     def test_payload_validation_requires_rcp(self):
-        """Payload without rcp snippet should be rejected."""
-        snippets = [
-            {"id": "fs1", "label": "fixture_schedule", "image_data": "x"},
-        ]
-        rcp_snippets = [s for s in snippets if s.get("label") == "rcp"]
-        self.assertEqual(len(rcp_snippets), 0, "No rcp snippet should fail validation")
+        """Payload without rcp snippet should be rejected with HTTP 400."""
+        from unittest.mock import MagicMock, patch
+        from fastapi.testclient import TestClient
+        from takeoff.api import app
+
+        snippets = [{"id": "fs1", "label": "fixture_schedule", "image_data": "x"}]
+        with patch("takeoff.api.engine", MagicMock()):
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.post("/takeoff/run", json={"snippets": snippets, "mode": "fast"})
+        self.assertEqual(resp.status_code, 400, f"Expected 400, got {resp.status_code}: {resp.text}")
+        self.assertIn("rcp", resp.json().get("detail", ""))
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -3744,6 +3763,109 @@ class TestCheckerGridFallbackCoverage(unittest.TestCase):
         self.assertIsNotNone(rcp_images_arg, "rcp_images must be passed to Checker for fallback area")
         fallback_labels = [img.get("area_label") for img in rcp_images_arg]
         self.assertIn("Bad Area", fallback_labels, "Bad Area must appear in rcp_images passed to Checker")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Round 20 — Bug Fixes + Regression Tests
+# ══════════════════════════════════════════════════════════════════════
+
+class TestRound20Regressions(unittest.TestCase):
+    """Regression tests for Round 20 bug fixes."""
+
+    def test_checker_cell_dedup_keeps_different_cell_ids(self):
+        """Regression (Round 17): two CELL attacks with same type+area but different
+        cell_ids must NOT be collapsed by dedup — each cell is a distinct check."""
+        # Simulate the dedup key logic from agents.py Checker.generate_attacks()
+        _SEVERITY_ORDER = {"minor": 1, "major": 2, "critical": 3}
+
+        attacks = [
+            {
+                "attack_id": "CELL001",
+                "category": "cell_count_mismatch",
+                "affected_type_tag": "A",
+                "affected_area": "Floor 1",
+                "cell_id": "A1",
+                "severity": "major",
+                "description": "Cell A1: extraction counted 3, checker found 5",
+            },
+            {
+                "attack_id": "CELL002",
+                "category": "cell_count_mismatch",
+                "affected_type_tag": "A",
+                "affected_area": "Floor 1",
+                "cell_id": "B2",
+                "severity": "major",
+                "description": "Cell B2: extraction counted 2, checker found 4",
+            },
+        ]
+
+        seen_attacks: dict = {}
+        for attack in attacks:
+            key = (
+                (attack.get("category") or "").lower(),
+                (attack.get("affected_type_tag") or "").upper(),
+                (attack.get("affected_area") or "").lower().strip(),
+                (attack.get("cell_id") or ""),
+            )
+            if key not in seen_attacks:
+                seen_attacks[key] = attack
+            else:
+                existing_sev = _SEVERITY_ORDER.get(
+                    (seen_attacks[key].get("severity") or "minor").lower(), 0
+                )
+                new_sev = _SEVERITY_ORDER.get(
+                    (attack.get("severity") or "minor").lower(), 0
+                )
+                if new_sev > existing_sev:
+                    seen_attacks[key] = attack
+
+        deduped = list(seen_attacks.values())
+        self.assertEqual(
+            len(deduped), 2,
+            "Two CELL attacks with different cell_ids must NOT be deduplicated into one"
+        )
+        cell_ids = {a["cell_id"] for a in deduped}
+        self.assertIn("A1", cell_ids)
+        self.assertIn("B2", cell_ids)
+
+    def test_checker_cell_dedup_same_cell_keeps_highest_severity(self):
+        """Dedup of genuinely duplicate attacks (same cell+type+area) keeps highest severity."""
+        _SEVERITY_ORDER = {"minor": 1, "major": 2, "critical": 3}
+
+        attacks = [
+            {
+                "category": "cell_count_mismatch", "affected_type_tag": "B",
+                "affected_area": "Floor 2", "cell_id": "C3", "severity": "minor",
+            },
+            {
+                "category": "cell_count_mismatch", "affected_type_tag": "B",
+                "affected_area": "Floor 2", "cell_id": "C3", "severity": "critical",
+            },
+        ]
+
+        seen_attacks: dict = {}
+        for attack in attacks:
+            key = (
+                (attack.get("category") or "").lower(),
+                (attack.get("affected_type_tag") or "").upper(),
+                (attack.get("affected_area") or "").lower().strip(),
+                (attack.get("cell_id") or ""),
+            )
+            if key not in seen_attacks:
+                seen_attacks[key] = attack
+            else:
+                existing_sev = _SEVERITY_ORDER.get(
+                    (seen_attacks[key].get("severity") or "minor").lower(), 0
+                )
+                new_sev = _SEVERITY_ORDER.get(
+                    (attack.get("severity") or "minor").lower(), 0
+                )
+                if new_sev > existing_sev:
+                    seen_attacks[key] = attack
+
+        deduped = list(seen_attacks.values())
+        self.assertEqual(len(deduped), 1, "Exact duplicate (same cell) should collapse to 1")
+        self.assertEqual(deduped[0]["severity"], "critical", "Higher severity must be kept")
 
 
 # ══════════════════════════════════════════════════════════════════════

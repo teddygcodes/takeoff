@@ -61,19 +61,19 @@ python -m takeoff job.json --verbose
 ### Fast Mode
 - **Agents:** Counter + Checker + Judge (skip Reconciler)
 - **Latency:** ~40-55s
-- **Cost:** ~$0.06-0.09
+- **Cost:** ~$0.12-0.15 (includes grid counting vision calls)
 - **Use for:** Quick preliminary estimate, simple single-sheet drawings
 
 ### Strict Mode (DEFAULT)
 - **Agents:** Counter + Checker + Reconciler + Judge
 - **Latency:** ~60-80s
-- **Cost:** ~$0.12-0.18
+- **Cost:** ~$0.20-0.30 (includes grid counting vision calls)
 - **Use for:** Bid submissions, multi-floor projects, complex fixture schedules
 
 ### Liability Mode
 - **Agents:** Same as Strict
 - **Latency:** ~70-90s
-- **Cost:** ~$0.15-0.22
+- **Cost:** ~$0.20-0.30 (includes grid counting vision calls)
 - **Use for:** Large commercial projects, design-build contracts, GMP bids
 
 ## Architecture
@@ -155,10 +155,10 @@ confidence = clamp(base_confidence + sum(feature * weight), 0.0, 1.0)
 - 0.40–0.64: LOW
 - 0.0–0.39: VERY_LOW
 
-**Hard Overrides:**
-- FATAL violation → confidence forced to 0.25
-- MAJOR violation → confidence − 0.20 (floor 0.40)
-- MINOR violation → confidence − 0.10 (floor 0.50)
+**Hard Overrides (applied after weighted sum):**
+- FATAL violation → score forced ≤ 0.25 (result blocked)
+- MAJOR violation → score capped at 0.40
+- MINOR violation → score capped at 0.50
 
 ## Snippet Labels
 
@@ -178,9 +178,9 @@ Takeoff stores all job results in `takeoff.db` (SQLite, WAL mode):
 - `takeoff_jobs` — job_id, drawing_name, snippet_count, mode, status
 - `snippets` — snippet_id, job_id, page_number, label, sub_label, bbox_json, image_path
 - `fixture_schedule` — job_id, type_tag, description, manufacturer, voltage, mounting, dimming
-- `fixture_counts` — job_id, type_tag, area, count, confidence, difficulty_code, flags
-- `adversarial_log` — job_id, agent, attack_id, severity, description, resolution, final_verdict
-- `results` — job_id, grand_total, confidence_score, confidence_band, violations_json
+- `fixture_counts` — job_id, type_tag, area, count, confidence, difficulty_code, flags; `cell_counts` JSON field contains per-cell grid breakdown (`"Area::CellID"` keys) when grid mode is active
+- `adversarial_log` — job_id, agent, attack_id, severity, description, resolution, final_verdict; `cell_id` field identifies the grid cell for CELL### attacks
+- `results` — job_id, grand_total, confidence_score, confidence_band, violations_json; `grid_config` JSON field contains per-area grid dimensions (`{rows, cols, cells}` keyed by area label)
 
 ## Model Allocation
 

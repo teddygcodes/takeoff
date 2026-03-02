@@ -105,6 +105,8 @@ class LLMProvider:
 
     def _calculate_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
         """Calculate cost for the API call."""
+        if model not in COST_PER_1K:
+            logger.warning("[LLM] Unknown model '%s' for cost calc — using Sonnet fallback pricing", model)
         costs = COST_PER_1K.get(model, {"input": 0.003, "output": 0.015})
         return (input_tokens / 1000 * costs["input"]) + (output_tokens / 1000 * costs["output"])
 

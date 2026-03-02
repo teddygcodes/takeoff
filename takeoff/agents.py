@@ -503,10 +503,15 @@ Return JSON ONLY — no explanatory text:
                     )
                     parsed = extract_json_from_response(raw, "CHECKER_CELL")
                     _raw_ic = parsed.get("independent_count", counter_count)
-                    independent_count = (
-                        int(_raw_ic) if isinstance(_raw_ic, (int, float)) and _raw_ic >= 0
-                        else counter_count
-                    )
+                    if isinstance(_raw_ic, (int, float)) and _raw_ic >= 0:
+                        independent_count = int(_raw_ic)
+                    else:
+                        logger.warning(
+                            "[CHECKER] Cell %s type %s: could not parse independent_count %r "
+                            "— defaulting to counter_count %d (no adversarial check)",
+                            cell.cell_id, type_tag, _raw_ic, counter_count
+                        )
+                        independent_count = counter_count
                     discrepancy = independent_count - counter_count
                     notes = parsed.get("notes", "")
                     return (area_label, cell.cell_id, type_tag, counter_count, independent_count, discrepancy, notes)

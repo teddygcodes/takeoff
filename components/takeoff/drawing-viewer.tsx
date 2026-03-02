@@ -168,9 +168,16 @@ export function DrawingViewer({
     await page.render({ canvasContext: ctx, viewport }).promise;
   }, []);
 
-  // Render all thumbnails after PDF loads
+  // Render all thumbnails after PDF loads; blank any stale ones from a previously-loaded PDF
   useEffect(() => {
     if (!pdfLoaded || pageCount === 0) return;
+    // Clear canvases for pages beyond the new page count (handles PDF swap: 10-page → 5-page)
+    const refs = thumbnailRefs.current;
+    const maxPrev = Math.max(...Object.keys(refs).map(Number), 0);
+    for (let pg = pageCount + 1; pg <= maxPrev; pg++) {
+      const canvas = refs[pg];
+      if (canvas) canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    }
     for (let pg = 1; pg <= pageCount; pg++) {
       renderThumbnail(pg);
     }
@@ -191,7 +198,7 @@ export function DrawingViewer({
   const handleFileSelect = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (file) await loadPdf(file);
+      if (file?.type === "application/pdf") await loadPdf(file);
       e.target.value = "";
     },
     [loadPdf]

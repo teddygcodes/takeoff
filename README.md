@@ -51,8 +51,8 @@ Open [http://localhost:3000/takeoff](http://localhost:3000/takeoff), upload a dr
 
 | Mode | Agents | Latency | Cost | Best For |
 |------|--------|---------|------|----------|
-| **Fast** | Counter + Checker + Judge | ~40–55s | ~$0.08–0.12 | Quick estimates, simple drawings |
-| **Strict** *(default)* | + Reconciler | ~60–80s | ~$0.15–0.25 | Bid submissions, multi-floor projects |
+| **Fast** | Counter + Checker + Judge | ~40–55s | ~$0.12–0.15 | Quick estimates, simple drawings |
+| **Strict** *(default)* | + Reconciler | ~60–80s | ~$0.20–0.30 | Bid submissions, multi-floor projects |
 | **Liability** | Same as Strict | ~70–90s | ~$0.20–0.30 | GMP bids, design-build contracts |
 
 ---
@@ -85,7 +85,10 @@ The Judge enforces 6 hard rules on every run:
 | 5 | **Emergency Fixture Tracking** — Exit signs and emergency units must be separately tracked | MAJOR |
 | 6 | **Flag Assumptions** — Ambiguous symbols or guessed quantities must be explicitly flagged | MAJOR |
 
-FATAL violations force confidence to 0.25 and block the result. MAJOR violations apply a −0.20 confidence penalty.
+Violation severity overrides the computed confidence score:
+- **FATAL** — score forced ≤ 0.25 and result is blocked
+- **MAJOR** — score capped at 0.40
+- **MINOR** — score capped at 0.50
 
 ---
 
@@ -104,6 +107,20 @@ fast_mode_penalty     -0.05   Reconciler skipped in fast mode
 ```
 
 **Bands:** HIGH (0.85–1.0) · MODERATE (0.65–0.84) · LOW (0.40–0.64) · VERY_LOW (0.0–0.39)
+
+---
+
+## Grid Counting
+
+Each RCP snippet is automatically divided into a 3×3 grid of cells before counting. This has two benefits:
+1. Each cell is small enough that vision models can count reliably without confusion from dense symbol clusters
+2. The Checker independently re-counts every cell, producing per-cell adversarial attacks (`CELL###`) rather than per-area attacks
+
+**Boundary rule:** A fixture is counted in the cell where its center (or >50% of its symbol) falls. Fixtures at cell edges are never double-counted.
+
+**Fallback:** If grid extraction fails for a given area (e.g., the cell image is too small or corrupt), the system automatically falls back to full-image counting for that area. Grid failure is logged as a warning, not an error.
+
+**Grid config** is included in results (`grid_config` field) showing the actual rows × cols and cell IDs used per area.
 
 ---
 
