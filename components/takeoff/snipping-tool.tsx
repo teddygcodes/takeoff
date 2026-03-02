@@ -13,6 +13,8 @@
  *     rect={snipRect}          // { x, y, width, height } in canvas-pixel coords
  *     canvasWidth={canvas.width}
  *     canvasHeight={canvas.height}
+ *     pending={true}           // larger handles when rect is awaiting confirmation
+ *     cursor="nwse-resize"     // cursor set by parent on handle hover
  *   />
  *
  * The overlay forwards all mouse events to the parent via onMouseDown /
@@ -33,6 +35,8 @@ interface SnippingToolProps {
   rect: SnipRect | null;
   canvasWidth: number;
   canvasHeight: number;
+  pending?: boolean;
+  cursor?: string;
   onMouseDown?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
   onMouseMove?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
   onMouseUp?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
@@ -43,6 +47,8 @@ export function SnippingTool({
   rect,
   canvasWidth,
   canvasHeight,
+  pending = false,
+  cursor = "crosshair",
   onMouseDown,
   onMouseMove,
   onMouseUp,
@@ -74,11 +80,11 @@ export function SnippingTool({
     // Selection border
     ctx.strokeStyle = "#dc2626";
     ctx.lineWidth = 2;
-    ctx.setLineDash([6, 3]);
+    ctx.setLineDash(pending ? [] : [6, 3]);
     ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
 
-    // Corner handles
-    const handleSize = 7;
+    // Corner handles — larger when pending to indicate draggability
+    const handleSize = pending ? 10 : 7;
     ctx.fillStyle = "#dc2626";
     ctx.setLineDash([]);
     const corners = [
@@ -103,7 +109,7 @@ export function SnippingTool({
       ctx.fillStyle = "#dc2626";
       ctx.fillText(label, rect.x + 6, rect.y - 6 > 10 ? rect.y - 6 : rect.y + 16);
     }
-  }, [active, rect, canvasWidth, canvasHeight]);
+  }, [active, rect, canvasWidth, canvasHeight, pending]);
 
   if (!active) return null;
 
@@ -121,7 +127,7 @@ export function SnippingTool({
         position: "absolute",
         top: 0,
         left: 0,
-        cursor: "crosshair",
+        cursor,
         // Pointer events are ON here — this canvas sits on top and captures mouse
         pointerEvents: "auto",
         zIndex: 10,

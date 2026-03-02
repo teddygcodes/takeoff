@@ -3871,6 +3871,99 @@ class TestRound20Regressions(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Round 22 Regression Tests
+# ══════════════════════════════════════════════════════════════════════
+
+class TestRound22Regressions(unittest.TestCase):
+    """Regression tests for Round 22 bug fixes."""
+
+    # ── Bug #3: constitution.py numeric token normalization ─────────────
+
+    def test_area_fuzzy_match_leading_zero_numeric(self):
+        """'Floor 01' should fuzzy-match 'Floor 1' after numeric normalization."""
+        from takeoff.constitution import _area_fuzzy_match, _normalize_area_label
+        expected = _normalize_area_label("Floor 01")
+        covered = {_normalize_area_label("Floor 1")}
+        self.assertTrue(_area_fuzzy_match(expected, covered),
+                        "'Floor 01' must match 'Floor 1' after int() normalization")
+
+    def test_area_fuzzy_match_leading_zero_still_rejects_different_level(self):
+        """'Floor 01' must NOT match 'Floor 2' even with leading-zero normalization."""
+        from takeoff.constitution import _area_fuzzy_match, _normalize_area_label
+        expected = _normalize_area_label("Floor 01")
+        covered = {_normalize_area_label("Floor 2")}
+        self.assertFalse(_area_fuzzy_match(expected, covered),
+                         "'Floor 01' must not match 'Floor 2'")
+
+    def test_area_fuzzy_match_zero_padded_multi_digit(self):
+        """'Level 002' should match 'Level 2' after int() normalization."""
+        from takeoff.constitution import _area_fuzzy_match, _normalize_area_label
+        expected = _normalize_area_label("Level 002")
+        covered = {_normalize_area_label("Level 2")}
+        self.assertTrue(_area_fuzzy_match(expected, covered),
+                        "'Level 002' must match 'Level 2'")
+
+    # ── Bug #1: extraction.py schedule_context consistency ───────────────
+
+    def test_schedule_context_only_contains_filtered_types(self):
+        """schedule_context passed to count_fixture_type_in_cell must not include
+        types with empty descriptions (regression for Bug #1)."""
+        import base64 as _b64
+        import io
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow not available")
+        from unittest.mock import MagicMock, patch
+        from takeoff.extraction import extract_rcp_counts_gridded
+
+        fs = MagicMock()
+        fs.fixtures = {
+            "VALID": {"description": "Recessed Can"},
+            "BLANK": {"description": ""},
+        }
+
+        img = Image.new("RGB", (200, 200), color=(255, 255, 255))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64 = _b64.b64encode(buf.getvalue()).decode()
+
+        seen_contexts = []
+
+        def _fake_count(client, cell, type_tag, type_desc, schedule_context, grid_dims):
+            from takeoff.extraction import CellTypeCount
+            seen_contexts.append(schedule_context)
+            return CellTypeCount(cell_id=cell.cell_id, type_tag=type_tag, count=0)
+
+        with patch("takeoff.extraction.count_fixture_type_in_cell", side_effect=_fake_count), \
+             patch("takeoff.extraction._get_vision_client", return_value=MagicMock()):
+            extract_rcp_counts_gridded(b64, fs, "TestFloor", grid_rows=2, grid_cols=2)
+
+        for ctx in seen_contexts:
+            self.assertNotIn("BLANK", ctx,
+                             "schedule_context must not list empty-description fixture type")
+            self.assertIn("VALID", ctx,
+                          "schedule_context must list valid fixture types")
+
+    # ── Improvement #11: LLM unknown model warning dedup ────────────────
+
+    def test_llm_unknown_model_warning_logged_once(self):
+        """Unknown model cost warning must fire only once per process, not every call."""
+        from takeoff.llm import LLMProvider, _warned_cost_models
+
+        # Ensure clean state for this specific model name
+        _warned_cost_models.discard("totally-unknown-model-xyz")
+
+        p = LLMProvider.__new__(LLMProvider)
+        with self.assertLogs("takeoff.llm", level="WARNING") as cm:
+            p._calculate_cost("totally-unknown-model-xyz", 1000, 500)
+            p._calculate_cost("totally-unknown-model-xyz", 1000, 500)  # second call — no new log
+
+        warnings = [m for m in cm.output if "totally-unknown-model-xyz" in m]
+        self.assertEqual(len(warnings), 1, "Unknown model warning should log exactly once")
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Entry point
 # ══════════════════════════════════════════════════════════════════════
 

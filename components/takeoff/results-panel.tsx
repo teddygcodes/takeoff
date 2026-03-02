@@ -30,7 +30,7 @@ function exportCSV(data: TakeoffResult) {
   ];
   const csvCell = (c: unknown) => {
     const s = Array.isArray(c) ? c.join("; ") : String(c);
-    return `"${s.replace(/"/g, '""')}"`;
+    return `"${s.replace(/"/g, '""').replace(/\n/g, " ").replace(/\r/g, "")}"`;
   };
   const csv = rows.map((r) => r.map(csvCell).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
@@ -505,8 +505,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
                   Feature Breakdown
                 </h3>
 
-                {Object.entries(data.confidence_breakdown).map(([feature, value]) => {
-                  if (typeof value !== "number") return null;
+                {Object.entries(data.confidence_breakdown).filter(([, value]) => typeof value === "number").map(([feature, value]) => {
                   const displayNames: Record<string, string> = {
                     schedule_match: "Schedule Match",
                     area_coverage: "Area Coverage",

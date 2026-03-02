@@ -43,6 +43,8 @@ class LLMResponse:
 
 # ─── Cost Constants ───────────────────────────────────────────────────────────
 
+_warned_cost_models: set = set()  # Track models already warned about to avoid log spam
+
 COST_PER_1K = {
     "claude-haiku-4-5-20251001": {"input": 0.001, "output": 0.005},
     "claude-sonnet-4-20250514": {"input": 0.003, "output": 0.015},
@@ -105,8 +107,9 @@ class LLMProvider:
 
     def _calculate_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
         """Calculate cost for the API call."""
-        if model not in COST_PER_1K:
+        if model not in COST_PER_1K and model not in _warned_cost_models:
             logger.warning("[LLM] Unknown model '%s' for cost calc — using Sonnet fallback pricing", model)
+            _warned_cost_models.add(model)
         costs = COST_PER_1K.get(model, {"input": 0.003, "output": 0.015})
         return (input_tokens / 1000 * costs["input"]) + (output_tokens / 1000 * costs["output"])
 

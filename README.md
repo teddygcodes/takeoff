@@ -122,6 +122,8 @@ Each RCP snippet is automatically divided into a 3×3 grid of cells before count
 
 **Grid config** is included in results (`grid_config` field) showing the actual rows × cols and cell IDs used per area.
 
+**Cost note:** Grid mode uses up to 9× more vision API calls per area (one per cell per fixture type). Expect $0.40–0.60 per grid job for typical drawings with 5 areas and 6 fixture types. See [docs/grid_counting_spec.md](docs/grid_counting_spec.md) for full implementation details.
+
 ---
 
 ## CLI Usage

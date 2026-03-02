@@ -59,10 +59,17 @@ export function DrawingViewer({
 }: DrawingViewerProps) {
   const [zoom, setZoom] = useState(100);
   const [pdfPageCssHeight, setPdfPageCssHeight] = useState(900);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [snipRect, setSnipRect] = useState<SnipRect | null>(null);
   const snipRectRef = useRef<SnipRect | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const startRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Pending rect: drawn but not yet confirmed; user can drag corners to resize
+  const [pendingRect, setPendingRect] = useState<SnipRect | null>(null);
+  const pendingRectRef = useRef<SnipRect | null>(null);
+  const dragHandleRef = useRef<number>(-1); // -1=none, 0=TL,1=TR,2=BL,3=BR
+  const [snipCursor, setSnipCursor] = useState<string>("crosshair");
 
   // Scroll container ref — used for non-passive wheel listener to intercept browser zoom
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -81,6 +88,22 @@ export function DrawingViewer({
   // Stable ref to snipMode — lets pan handlers read current value without dep-array churn
   const snipModeRef = useRef(snipMode);
   useEffect(() => { snipModeRef.current = snipMode; }, [snipMode]);
+
+  // Clear pending rect when snip mode is toggled off or page changes
+  useEffect(() => {
+    if (!snipMode) {
+      setPendingRect(null);
+      pendingRectRef.current = null;
+      dragHandleRef.current = -1;
+      setSnipCursor("crosshair");
+    }
+  }, [snipMode]);
+  useEffect(() => {
+    setPendingRect(null);
+    pendingRectRef.current = null;
+    dragHandleRef.current = -1;
+    setSnipCursor("crosshair");
+  }, [currentPage]);
 
   // Pan state — isPanning drives grab/grabbing cursor; pan coords are local to the effect
   const [isPanning, setIsPanning] = useState(false);
@@ -178,19 +201,25 @@ export function DrawingViewer({
       const canvas = refs[pg];
       if (canvas) canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
     }
-    for (let pg = 1; pg <= pageCount; pg++) {
-      renderThumbnail(pg);
-    }
+    // Defer thumbnails so main page gets uncontested pdfjs render time first
+    const id = setTimeout(() => {
+      for (let pg = 1; pg <= pageCount; pg++) {
+        renderThumbnail(pg);
+      }
+    }, 400);
+    return () => clearTimeout(id);
   }, [pdfLoaded, pageCount, renderThumbnail]);
 
   /* ── PDF loading ────────────────────────────────────────────── */
 
   const loadPdf = useCallback(
     async (file: File) => {
+      setPdfLoading(true);
       const buffer = await file.arrayBuffer();
       const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
       pdfDocRef.current = doc;
       onPdfLoaded(doc.numPages);
+      setPdfLoading(false);
     },
     [onPdfLoaded]
   );
@@ -300,6 +329,27 @@ export function DrawingViewer({
   const onSnipMouseDown = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const pos = getCanvasPos(e);
+      // If a pending rect exists, check if click is on a corner handle
+      if (pendingRectRef.current) {
+        const r = pendingRectRef.current;
+        const corners = [
+          { x: r.x, y: r.y },
+          { x: r.x + r.width, y: r.y },
+          { x: r.x, y: r.y + r.height },
+          { x: r.x + r.width, y: r.y + r.height },
+        ];
+        for (let i = 0; i < 4; i++) {
+          const dx = pos.x - corners[i].x;
+          const dy = pos.y - corners[i].y;
+          if (Math.sqrt(dx * dx + dy * dy) <= 12) {
+            dragHandleRef.current = i;
+            return; // start handle drag — don't clear pending
+          }
+        }
+        // Clicked away from all handles → clear pending and start new draw
+        setPendingRect(null);
+        pendingRectRef.current = null;
+      }
       startRef.current = pos;
       setIsDrawing(true);
       setSnipRect({ x: pos.x, y: pos.y, width: 0, height: 0 });
@@ -307,10 +357,52 @@ export function DrawingViewer({
     [getCanvasPos]
   );
 
+  const HANDLE_CURSORS = ["nwse-resize", "nesw-resize", "nesw-resize", "nwse-resize"] as const;
+
   const onSnipMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (!isDrawing || !startRef.current) return;
       const pos = getCanvasPos(e);
+
+      // Handle drag: resize the pending rect via corner handle
+      if (dragHandleRef.current >= 0 && pendingRectRef.current) {
+        const h = dragHandleRef.current;
+        let { x, y, width, height } = pendingRectRef.current;
+        if (h === 0) { width += x - pos.x; x = pos.x; height += y - pos.y; y = pos.y; }
+        else if (h === 1) { width = pos.x - x; height += y - pos.y; y = pos.y; }
+        else if (h === 2) { width += x - pos.x; x = pos.x; height = pos.y - y; }
+        else { width = pos.x - x; height = pos.y - y; }
+        if (width < 20 || height < 20) return;
+        const updated = { x, y, width, height };
+        pendingRectRef.current = updated;
+        setPendingRect({ ...updated });
+        return;
+      }
+
+      // Cursor hint: show resize cursor when hovering near a pending rect corner
+      if (!isDrawing && pendingRectRef.current) {
+        const r = pendingRectRef.current;
+        const corners = [
+          { x: r.x, y: r.y },
+          { x: r.x + r.width, y: r.y },
+          { x: r.x, y: r.y + r.height },
+          { x: r.x + r.width, y: r.y + r.height },
+        ];
+        let found = false;
+        for (let i = 0; i < 4; i++) {
+          const dx = pos.x - corners[i].x;
+          const dy = pos.y - corners[i].y;
+          if (Math.sqrt(dx * dx + dy * dy) <= 12) {
+            setSnipCursor(HANDLE_CURSORS[i]);
+            found = true;
+            break;
+          }
+        }
+        if (!found) setSnipCursor("crosshair");
+        return;
+      }
+
+      // Normal draw
+      if (!isDrawing || !startRef.current) return;
       const rect = {
         x: Math.min(startRef.current.x, pos.x),
         y: Math.min(startRef.current.y, pos.y),
@@ -324,38 +416,64 @@ export function DrawingViewer({
   );
 
   const onSnipMouseUp = useCallback(() => {
+    // End handle drag
+    if (dragHandleRef.current >= 0) {
+      dragHandleRef.current = -1;
+      return;
+    }
+    // End initial draw → go to pending state (user can resize before confirming)
     setIsDrawing(false);
     const rect = snipRectRef.current;
     if (rect && rect.width > 20 && rect.height > 20) {
-      let imageData = "";
-      const canvas = pdfCanvasRef.current;
-      if (canvas && canvas.width > 0 && canvas.height > 0) {
-        // Canvas native pixels = CSS pixels × DPR (set explicitly in renderPage)
-        const dpr = window.devicePixelRatio || 1;
-        const sx = Math.round(rect.x * dpr);
-        const sy = Math.round(rect.y * dpr);
-        const sw = Math.max(1, Math.round(rect.width * dpr));
-        const sh = Math.max(1, Math.round(rect.height * dpr));
-        const tmp = document.createElement("canvas");
-        tmp.width = sw;
-        tmp.height = sh;
-        tmp.getContext("2d")!.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
-        imageData = tmp.toDataURL("image/png").split(",")[1] ?? "";
-      }
-      // Normalise from display-pixel space → zoom=100 space so overlay positions
-      // are correct regardless of which zoom level the snip was captured at
-      const z = zoom / 100;
-      const normBbox = {
-        x: rect.x / z,
-        y: rect.y / z,
-        width: rect.width / z,
-        height: rect.height / z,
-      };
-      onSnipComplete(normBbox, imageData);
+      setPendingRect(rect);
+      pendingRectRef.current = rect;
     }
     snipRectRef.current = null;
     setSnipRect(null);
     startRef.current = null;
+    setSnipCursor("crosshair");
+  }, []);
+
+  const captureAndConfirm = useCallback(() => {
+    const rect = pendingRectRef.current;
+    if (!rect) return;
+    let imageData = "";
+    const canvas = pdfCanvasRef.current;
+    if (canvas && canvas.width > 0 && canvas.height > 0) {
+      const dpr = window.devicePixelRatio || 1;
+      const sx = Math.round(rect.x * dpr);
+      const sy = Math.round(rect.y * dpr);
+      const sw = Math.max(1, Math.round(rect.width * dpr));
+      const sh = Math.max(1, Math.round(rect.height * dpr));
+      const tmp = document.createElement("canvas");
+      tmp.width = sw;
+      tmp.height = sh;
+      tmp.getContext("2d")!.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+      // Cap at 1600px on longest side to reduce Claude Vision token cost
+      const MAX_PX = 1600;
+      let finalCanvas: HTMLCanvasElement = tmp;
+      if (sw > MAX_PX || sh > MAX_PX) {
+        const scale = MAX_PX / Math.max(sw, sh);
+        const scaled = document.createElement("canvas");
+        scaled.width = Math.round(sw * scale);
+        scaled.height = Math.round(sh * scale);
+        scaled.getContext("2d")!.drawImage(tmp, 0, 0, scaled.width, scaled.height);
+        finalCanvas = scaled;
+      }
+      imageData = finalCanvas.toDataURL("image/jpeg", 0.85).split(",")[1] ?? "";
+    }
+    // Normalise from display-pixel space → zoom=100 space
+    const z = zoom / 100;
+    const normBbox = {
+      x: rect.x / z,
+      y: rect.y / z,
+      width: rect.width / z,
+      height: rect.height / z,
+    };
+    setPendingRect(null);
+    pendingRectRef.current = null;
+    setSnipCursor("crosshair");
+    onSnipComplete(normBbox, imageData);
   }, [onSnipComplete, zoom]);
 
   /* Current page snippets */
@@ -595,6 +713,19 @@ export function DrawingViewer({
 
   /* ── Canvas / Empty State ───────────────────────────────────── */
   const renderCanvas = () => {
+    if (pdfLoading) {
+      return (
+        <div className="flex flex-1 items-center justify-center bg-canvas">
+          <div className="flex flex-col items-center gap-3 text-muted-foreground">
+            <svg className="h-6 w-6 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" strokeDasharray="60" strokeDashoffset="20" />
+            </svg>
+            <p className="text-sm">Loading blueprint...</p>
+          </div>
+        </div>
+      );
+    }
+
     if (!pdfLoaded) {
       return (
         <>
@@ -683,13 +814,48 @@ export function DrawingViewer({
           {/* Snipping tool overlay */}
           <SnippingTool
             active={snipMode}
-            rect={snipRect}
+            rect={isDrawing ? snipRect : pendingRect}
+            pending={!isDrawing && !!pendingRect}
+            cursor={snipCursor}
             canvasWidth={(CANVAS_W * zoom) / 100}
             canvasHeight={pdfPageCssHeight}
             onMouseDown={onSnipMouseDown}
             onMouseMove={onSnipMouseMove}
             onMouseUp={onSnipMouseUp}
           />
+
+          {/* Confirm / Cancel buttons shown while a pending rect awaits confirmation */}
+          {snipMode && pendingRect && !isDrawing && (
+            <div
+              style={{
+                position: "absolute",
+                left: `${Math.min(pendingRect.x + pendingRect.width, (CANVAS_W * zoom) / 100 - 144)}px`,
+                top: `${pendingRect.y + pendingRect.height + 6}px`,
+                zIndex: 20,
+                display: "flex",
+                gap: "6px",
+                pointerEvents: "auto",
+              }}
+            >
+              <button
+                onClick={captureAndConfirm}
+                className="rounded px-2.5 py-1 text-xs font-semibold text-white shadow"
+                style={{ backgroundColor: "var(--accent)" }}
+              >
+                Confirm
+              </button>
+              <button
+                onClick={() => {
+                  setPendingRect(null);
+                  pendingRectRef.current = null;
+                  setSnipCursor("crosshair");
+                }}
+                className="rounded border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground shadow"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
 
         {renderPipelineOverlay()}

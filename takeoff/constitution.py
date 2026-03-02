@@ -182,11 +182,21 @@ def _area_fuzzy_match(expected: str, covered_set: set) -> bool:
     tokens in the expected label must appear in the candidate (prevents "Level 1"
     from matching "Level 2"). Falls back to difflib ratio ≥0.80 for short labels.
     """
-    exp_nums = set(re.findall(r'\d+', expected))
+    # Normalize numeric tokens to ints so "Floor 01" matches "Floor 1"
+    def _norm_nums(s: str) -> frozenset:
+        result = set()
+        for tok in re.findall(r'\d+', s):
+            try:
+                result.add(int(tok))
+            except ValueError:
+                result.add(tok)
+        return frozenset(result)
+
+    exp_nums = _norm_nums(expected)
     exp_words = {w for w in expected.split() if w not in _AREA_STOPWORDS and len(w) > 1}
 
     for candidate in covered_set:
-        cand_nums = set(re.findall(r'\d+', candidate))
+        cand_nums = _norm_nums(candidate)
         cand_words = {w for w in candidate.split() if w not in _AREA_STOPWORDS and len(w) > 1}
 
         # Numeric tokens must match exactly — "Level 1" must not match "Level 2",

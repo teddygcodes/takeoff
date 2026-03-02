@@ -722,7 +722,7 @@ def generate_grid(
 
             crop = img.crop((x0, y0, x1, y1))
             buf = io.BytesIO()
-            crop.save(buf, format="PNG")
+            crop.save(buf, format="JPEG", quality=85)
             cell_b64 = base64.b64encode(buf.getvalue()).decode()
 
             cell_id = chr(ord("A") + r) + str(c + 1)
@@ -791,7 +791,8 @@ def count_fixture_type_in_cell(
 
     try:
         raw = _call_vision_with_retry(
-            client, system_prompt, user_text, cell.image_base64,
+            client, system_prompt, user_text,
+            "data:image/jpeg;base64," + cell.image_base64,
             max_tokens=200, temperature=0.0,
         )
         parsed = extract_json_from_response(raw, f"GRID_CELL_{cell.cell_id}_{type_tag}")
@@ -859,10 +860,11 @@ def extract_rcp_counts_gridded(
             warnings=["No fixture types in schedule — cannot count"],
         )
 
-    # Build schedule context string for the prompt
+    # Build schedule context string from the same filtered type_items so the
+    # vision model's context matches exactly what it will be asked to count.
     schedule_context = "\n".join(
-        f"  {tag}: {(info.get('description', '') if isinstance(info, dict) else '')}"
-        for tag, info in fixture_schedule.fixtures.items()
+        f"  {tag}: {desc}"
+        for tag, desc in type_items
     )
 
     actual_rows = (max(c.row for c in cells) + 1) if cells else grid_rows

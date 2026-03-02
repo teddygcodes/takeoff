@@ -9,6 +9,7 @@ interface SnippetTrayProps {
   onRelabelSnippet: (id: string, label: string, subLabel: string) => void;
   onHighlightSnippet: (snippet: Snippet | null) => void;
   onRunTakeoff: (mode: string) => void;
+  onActivateSnip: () => void;
   isRunning: boolean;
   hasPdf: boolean;
 }
@@ -69,6 +70,7 @@ export function SnippetTray({
   onRelabelSnippet,
   onHighlightSnippet,
   onRunTakeoff,
+  onActivateSnip,
   isRunning,
   hasPdf,
 }: SnippetTrayProps) {
@@ -78,7 +80,7 @@ export function SnippetTray({
   const [editSubLabel, setEditSubLabel] = useState("");
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
 
-  const { ready, message, counts } = getReadiness(snippets);
+  const { ready, message, counts } = useMemo(() => getReadiness(snippets), [snippets]);
 
   const startEdit = useCallback((snippet: Snippet) => {
     setEditingId(snippet.id);
@@ -121,7 +123,7 @@ export function SnippetTray({
       </div>
 
       {/* Snippet list */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {!hasPdf ? (
           <div className="flex h-full items-center justify-center p-6">
             <p className="text-center text-sm italic text-muted-foreground">
@@ -130,6 +132,43 @@ export function SnippetTray({
           </div>
         ) : (
           <div className="p-3">
+            {/* ── Step Guide Banner ── */}
+            {(() => {
+              const hasSchedule = (counts["fixture_schedule"] || 0) >= 1;
+              const hasRcp = (counts["rcp"] || 0) >= 1;
+              if (hasSchedule && hasRcp) return null;
+
+              const isStep1 = !hasSchedule;
+              return (
+                <div
+                  className="mb-3 rounded-lg border p-3"
+                  style={{
+                    borderColor: "rgba(220,38,38,0.25)",
+                    background: "rgba(220,38,38,0.04)",
+                  }}
+                >
+                  <p className="mb-0.5 font-mono text-[10px] font-semibold uppercase tracking-widest text-accent">
+                    {isStep1 ? "Step 1 of 2" : "Step 2 of 2"}
+                  </p>
+                  <p className="mb-1 text-sm font-semibold text-foreground">
+                    {isStep1 ? "Fixture Schedule" : "RCP Areas"}
+                  </p>
+                  <p className="mb-3 text-xs text-muted-foreground">
+                    {isStep1
+                      ? "Draw a box around the fixture type table in your drawing."
+                      : "Draw a box around each ceiling plan area. Give each one a name like \u201CFloor 1\u201D or \u201CZone A\u201D."}
+                  </p>
+                  <button
+                    onClick={onActivateSnip}
+                    className="w-full rounded-md py-2 text-xs font-semibold text-white transition-colors"
+                    style={{ backgroundColor: "var(--accent)" }}
+                  >
+                    {isStep1 ? "Snip Fixture Schedule" : hasRcp ? "+ Snip Another Area" : "Snip RCP Area"}
+                  </button>
+                </div>
+              );
+            })()}
+
             {labelOrder.map((labelKey) => {
               const group = grouped[labelKey];
               const count = group ? group.length : 0;
@@ -242,7 +281,7 @@ export function SnippetTray({
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
                                   </button>
                                   <button
-                                    onClick={(e) => { e.stopPropagation(); onDeleteSnippet(snippet.id); }}
+                                    onClick={(e) => { e.stopPropagation(); onHighlightSnippet(null); onDeleteSnippet(snippet.id); }}
                                     className="rounded p-1 text-xs text-muted-foreground transition-colors hover:bg-red-50 hover:text-accent"
                                     title="Delete"
                                     aria-label="Delete snippet"
@@ -266,7 +305,7 @@ export function SnippetTray({
 
       {/* Bottom run section */}
       {hasPdf && (
-        <div className="border-t border-border bg-sidebar p-4">
+        <div className="shrink-0 border-t border-border bg-sidebar p-4">
           {/* Status */}
           <p className="mb-3 text-center font-mono text-xs text-muted-foreground">{message}</p>
 

@@ -204,5 +204,88 @@ class TestRunTakeoffValidation(unittest.TestCase):
                     f"Label '{label}' incorrectly rejected with 422")
 
 
+# ── API key guard middleware ───────────────────────────────────────────────────
+
+class TestAPIKeyGuard(unittest.TestCase):
+    """Tests for api_key_guard middleware using TAKEOFF_API_KEY env var."""
+
+    def setUp(self):
+        api_mod.engine = MagicMock()
+
+    def _valid_snippets(self):
+        return [
+            {"id": "s1", "label": "fixture_schedule", "sub_label": "", "page_number": 1, "image_data": "abc"},
+            {"id": "s2", "label": "rcp", "sub_label": "Zone A", "page_number": 2, "image_data": "abc"},
+        ]
+
+    def test_missing_key_returns_403(self):
+        """When TAKEOFF_API_KEY is set, requests without X-API-Key get 403."""
+        with patch.object(api_mod, "_TAKEOFF_API_KEY", "secret123"):
+            client = TestClient(app)
+            r = client.post("/takeoff/run",
+                            json={"snippets": self._valid_snippets(), "mode": "fast"})
+        self.assertEqual(r.status_code, 403)
+
+    def test_valid_key_passes_guard(self):
+        """When correct X-API-Key is provided, guard passes (not 403)."""
+        with patch.object(api_mod, "_TAKEOFF_API_KEY", "secret123"):
+            client = TestClient(app)
+            r = client.post("/takeoff/run",
+                            json={"snippets": self._valid_snippets(), "mode": "fast"},
+                            headers={"X-API-Key": "secret123"})
+        self.assertNotEqual(r.status_code, 403)
+
+    def test_health_bypasses_key_guard(self):
+        """Health endpoint is accessible even when API key guard is active."""
+        with patch.object(api_mod, "_TAKEOFF_API_KEY", "secret123"):
+            client = TestClient(app)
+            r = client.get("/takeoff/health")
+        self.assertNotEqual(r.status_code, 403)
+
+    def test_no_guard_when_key_not_configured(self):
+        """When _TAKEOFF_API_KEY is None, all requests pass guard (not 403)."""
+        with patch.object(api_mod, "_TAKEOFF_API_KEY", None):
+            client = TestClient(app)
+            r = client.post("/takeoff/run",
+                            json={"snippets": self._valid_snippets(), "mode": "fast"})
+        self.assertNotEqual(r.status_code, 403)
+
+
+# ── grid result passthrough ────────────────────────────────────────────────────
+
+class TestGridResultPassthrough(unittest.TestCase):
+    """Verify cell_counts and cell_id fields survive _format_for_frontend."""
+
+    def test_cell_counts_on_fixture_entry_passes_through(self):
+        """cell_counts dict on a fixture_table entry must survive remapping."""
+        fixture_with_cells = {
+            "type_tag": "A", "total": 12,
+            "cell_counts": {"Floor 1::A1": 3, "Floor 1::B2": 9},
+        }
+        raw = {"fixture_table": [fixture_with_cells]}
+        out = _format_for_frontend(raw)
+        self.assertEqual(out["fixture_counts"][0]["cell_counts"],
+                         {"Floor 1::A1": 3, "Floor 1::B2": 9})
+
+    def test_cell_id_on_adversarial_entry_passes_through(self):
+        """cell_id on an adversarial_log entry must pass through unchanged."""
+        adv = [{"attack_id": "CELL001", "cell_id": "B3", "category": "cell_count_mismatch"}]
+        raw = {"adversarial_log": adv}
+        out = _format_for_frontend(raw)
+        self.assertEqual(out["adversarial_log"][0]["cell_id"], "B3")
+
+    def test_grid_config_per_area_dict_passes_through(self):
+        """grid_config as a per-area dict must pass through correctly."""
+        gc = {
+            "Floor 1": {"rows": 3, "cols": 3, "cells": ["A1", "A2", "B1"]},
+            "Floor 2": {"rows": 2, "cols": 2, "cells": ["A1", "A2", "B1", "B2"]},
+        }
+        raw = {"grid_config": gc}
+        out = _format_for_frontend(raw)
+        self.assertEqual(out["grid_config"], gc)
+        self.assertIn("Floor 1", out["grid_config"])
+        self.assertIn("Floor 2", out["grid_config"])
+
+
 if __name__ == "__main__":
     unittest.main()

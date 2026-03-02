@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import Link from "next/link";
 import { DrawingViewer, type SnippetData } from "@/components/takeoff/drawing-viewer";
 import { SnippetTray } from "@/components/takeoff/snippet-tray";
@@ -33,6 +33,13 @@ export default function TakeoffPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [snipMode, setSnipMode] = useState(false);
   const [pdfLoaded, setPdfLoaded] = useState(false);
+
+  // Auto-activate snip mode once PDF loads (guides user straight into first capture)
+  useEffect(() => {
+    if (pdfLoaded && snippets.length === 0) {
+      setSnipMode(true);
+    }
+  }, [pdfLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Snippet management ──────────────────────────────────────────────
   const handleSnippetCaptured = useCallback((snippet: SnippetData) => {
@@ -235,9 +242,12 @@ export default function TakeoffPage() {
                 snipMode={snipMode}
                 onToggleSnip={() => setSnipMode((m) => !m)}
                 onSnipComplete={(bbox, imageData) => {
+                  // Default to "rcp" once a fixture schedule exists — guides user through step 2
+                  const hasSchedule = snippets.some((s) => s.label === "fixture_schedule");
+                  const defaultLabel = hasSchedule ? "rcp" : "fixture_schedule";
                   const snippet: SnippetData = {
                     id: `s${Date.now()}_${++snippetSeqRef.current}`,
-                    label: "fixture_schedule",
+                    label: defaultLabel,
                     sub_label: "",
                     page_number: currentPage,
                     bbox,
@@ -266,6 +276,7 @@ export default function TakeoffPage() {
                 onRelabelSnippet={handleRelabelSnippet}
                 onHighlightSnippet={setHighlightSnippet}
                 onRunTakeoff={handleRunTakeoff}
+                onActivateSnip={() => setSnipMode(true)}
                 isRunning={isRunning}
                 hasPdf={pdfLoaded}
               />

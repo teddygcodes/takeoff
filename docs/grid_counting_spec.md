@@ -453,4 +453,4 @@ tests/test_takeoff_pipeline.py:
     — partial grid fallback: fallback area passed as rcp_images to Checker (Round 17 regression)
 ```
 
-**Test results:** 217 Python passed, 1 skipped; 9 frontend passed; `npm run build` clean; `npm run lint` clean (1 pre-existing `no-img-element` warning)
+**Test results:** 265 Python passed, 1 skipped; 9 frontend passed; `npm run build` clean; `npm run lint` clean (1 pre-existing `no-img-element` warning)
