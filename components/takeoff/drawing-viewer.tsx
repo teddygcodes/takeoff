@@ -68,6 +68,28 @@ export function DrawingViewer({
     isDrawingRef.current = val;
     setIsDrawing(val);
   }, []);
+
+  // Defined early so the snipMode useEffect below can reference it in its dep array
+  // without hitting a temporal dead zone (TDZ) error.
+  const onSnipMouseUp = useCallback(() => {
+    // End handle drag
+    if (dragHandleRef.current >= 0) {
+      dragHandleRef.current = -1;
+      return;
+    }
+    // End initial draw → go to pending state (user can resize before confirming)
+    setIsDrawingWithRef(false);
+    const rect = snipRectRef.current;
+    if (rect && rect.width > 20 && rect.height > 20) {
+      setPendingRect(rect);
+      pendingRectRef.current = rect;
+    }
+    snipRectRef.current = null;
+    setSnipRect(null);
+    startRef.current = null;
+    setSnipCursor("crosshair");
+  }, [setIsDrawingWithRef]);
+
   const startRef = useRef<{ x: number; y: number } | null>(null);
 
   // Pending rect: drawn but not yet confirmed; user can drag corners to resize
@@ -440,25 +462,6 @@ export function DrawingViewer({
     },
     [getCanvasPos]
   );
-
-  const onSnipMouseUp = useCallback(() => {
-    // End handle drag
-    if (dragHandleRef.current >= 0) {
-      dragHandleRef.current = -1;
-      return;
-    }
-    // End initial draw → go to pending state (user can resize before confirming)
-    setIsDrawingWithRef(false);
-    const rect = snipRectRef.current;
-    if (rect && rect.width > 20 && rect.height > 20) {
-      setPendingRect(rect);
-      pendingRectRef.current = rect;
-    }
-    snipRectRef.current = null;
-    setSnipRect(null);
-    startRef.current = null;
-    setSnipCursor("crosshair");
-  }, [setIsDrawingWithRef]);
 
   const captureAndConfirm = useCallback(() => {
     const rect = pendingRectRef.current;

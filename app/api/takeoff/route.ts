@@ -80,13 +80,23 @@ export async function POST(req: NextRequest) {
     duplex: "half",
   } as RequestInit & { duplex: string };
 
-  const upstreamRes = await fetch(
-    `${TAKEOFF_API_URL}/takeoff/run`,
-    fetchOptions
-  ).catch((err) => {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Cannot reach takeoff backend at ${TAKEOFF_API_URL}: ${message}`);
-  });
+  let upstreamRes: Response;
+  try {
+    upstreamRes = await fetch(`${TAKEOFF_API_URL}/takeoff/run`, fetchOptions);
+  } catch (err) {
+    // Backend is unreachable (not running, wrong port, etc.) — return a readable
+    // SSE error event instead of letting the exception become an opaque HTTP 500.
+    const detail = err instanceof Error ? err.message : String(err);
+    const sseError = JSON.stringify({
+      type: "error",
+      message: `Cannot reach the Takeoff backend at ${TAKEOFF_API_URL}. Make sure the Python server is running (./run_api.sh). Detail: ${detail}`,
+    });
+    const sseDone = JSON.stringify({ type: "done" });
+    return new Response(`data: ${sseError}\n\ndata: ${sseDone}\n\n`, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+    });
+  }
 
   if (!upstreamRes.ok) {
     const text = await upstreamRes.text().catch(() => "Unknown error");

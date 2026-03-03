@@ -34,11 +34,30 @@ export default function TakeoffPage() {
   const [snipMode, setSnipMode] = useState(false);
   const [pdfLoaded, setPdfLoaded] = useState(false);
 
+  // Backend health — null=checking, true=online, false=offline
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
+
   // Abort any in-flight SSE stream when the component unmounts
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
     };
+  }, []);
+
+  // Poll /api/takeoff (health check) every 10s so user knows if backend is down
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch("/api/takeoff", { method: "GET", cache: "no-store" });
+        if (!cancelled) setBackendOnline(res.ok);
+      } catch {
+        if (!cancelled) setBackendOnline(false);
+      }
+    };
+    check();
+    const interval = setInterval(check, 10_000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
   // Auto-activate snip mode once PDF loads (guides user straight into first capture)
@@ -251,6 +270,21 @@ export default function TakeoffPage() {
           </div>
         )}
       </header>
+
+      {/* ── Backend offline banner ── */}
+      {backendOnline === false && (
+        <div
+          role="alert"
+          className="flex shrink-0 items-center gap-2 border-b border-amber-300 bg-amber-50 px-6 py-2 text-xs font-medium text-amber-800"
+          style={{ letterSpacing: "0.05em" }}
+        >
+          <span>⚠</span>
+          <span>
+            Python backend is offline — start it with{" "}
+            <code className="rounded bg-amber-100 px-1 py-0.5 font-mono">./run_api.sh</code>
+          </span>
+        </div>
+      )}
 
       {/* ── Main Layout ── */}
       <div className="flex min-h-0 flex-1">
