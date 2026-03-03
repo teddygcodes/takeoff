@@ -154,6 +154,34 @@ class TestConstitutionEnforcement(unittest.TestCase):
             f"Expected violation mentioning 'Z', got: {violations}",
         )
 
+    def test_empty_type_tag_fails_traceability(self):
+        """Fixture with empty type_tag is a phantom fixture — must fail with FATAL."""
+        bad_counts = list(VALID_FIXTURE_COUNTS_LIST) + [
+            {
+                "type_tag": "",
+                "description": "Some fixture",
+                "total": 2,
+                "counts_by_area": {"Open Office North": 2},
+            }
+        ]
+        violations = check_schedule_traceability(bad_counts, SAMPLE_FIXTURE_SCHEDULE)
+        self.assertTrue(
+            len(violations) > 0,
+            f"Expected violations for empty type_tag, got: {violations}",
+        )
+        # Verify it's a FATAL violation
+        fatal_violations = [v for v in violations if v.get("severity") == "FATAL"]
+        self.assertTrue(
+            len(fatal_violations) > 0,
+            f"Expected FATAL violation, got: {violations}",
+        )
+        # Verify message mentions phantom or empty type
+        self.assertTrue(
+            any("phantom" in str(v).lower() or "empty" in str(v).lower()
+                for v in fatal_violations),
+            f"Expected violation message mentioning phantom or empty, got: {fatal_violations}",
+        )
+
     def test_valid_areas_pass_coverage(self):
         violations = check_complete_coverage(VALID_AREAS_COVERED, SAMPLE_RCP_SNIPPETS)
         self.assertEqual(violations, [])

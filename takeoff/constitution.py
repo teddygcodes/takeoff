@@ -188,8 +188,13 @@ def _area_fuzzy_match(expected: str, covered_set: set) -> bool:
     vs "Level 1 North Wing". Requires ≥60% non-stop word overlap AND any numeric
     tokens in the expected label must appear in the candidate (prevents "Level 1"
     from matching "Level 2"). Falls back to difflib ratio ≥0.80 for short labels.
-    The 0.60 threshold prevents false positives like "North Wing" matching "South Wing"
-    (1 shared word out of 2 = 0.50, which would be accepted at 0.50 but rejected at 0.60).
+
+    The 0.60 threshold prevents false positives in cases with 2 non-stopword content
+    words where only 1 is shared. For example, 'lab alpha' vs 'lab beta' have 1 shared
+    word out of 2 (0.50 overlap), which is rejected at 0.60. Note that 'North Wing' vs
+    'South Wing' was always rejected (not due to threshold) because 'wing' is in
+    _AREA_STOPWORDS, leaving 0 shared content words (0/1 = 0.0). The SequenceMatcher
+    fallback can also rescue matches that the word-overlap path rejects.
     """
     # Normalize numeric tokens to ints so "Floor 01" matches "Floor 1"
     def _norm_nums(s: str) -> frozenset:
