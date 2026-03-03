@@ -47,6 +47,13 @@ _EXTRACTION_ERRORS = (
     RuntimeError, json.JSONDecodeError, ValueError, OSError, TimeoutError
 ) + ((anthropic.APIError,) if HAS_ANTHROPIC else ())
 
+# Bug 2 fix: Separate transient errors (worth retrying) from deterministic ones (not worth retrying).
+# json.JSONDecodeError and ValueError are deterministic: the model returned malformed content and
+# retrying the same call will produce the same bad output, so sleeping before re-trying wastes time.
+# RuntimeError is treated as transient — it is raised for API-level problems like empty responses.
+_TRANSIENT_ERRORS = (RuntimeError, OSError, TimeoutError) + ((anthropic.APIError,) if HAS_ANTHROPIC else ())
+_DETERMINISTIC_ERRORS = (json.JSONDecodeError, ValueError)
+
 
 # ─── Vision Cost Tracking ─────────────────────────────────────────────────────
 
@@ -375,11 +382,20 @@ def _call_vision_with_retry(
     max_retries: int = 2
 ) -> str:
     """Call vision API with exponential backoff retry on transient failures."""
+    # Bug 4 fix: Guard against negative max_retries — range(-1 + 1) is empty, leaving
+    # last_error as None, which causes TypeError when we do `raise None` below.
+    if max_retries < 0:
+        raise ValueError(f"max_retries must be >= 0, got {max_retries}")
+
     last_error = None
     for attempt in range(max_retries + 1):
         try:
             return _call_vision(client, system_prompt, user_text, image_base64, max_tokens, temperature, model)
-        except _EXTRACTION_ERRORS as e:
+        except _DETERMINISTIC_ERRORS:
+            # Bug 2 fix: Deterministic failures (malformed JSON / bad values) will not be
+            # fixed by retrying the same call. Raise immediately without sleeping.
+            raise
+        except _TRANSIENT_ERRORS as e:
             last_error = e
             if attempt < max_retries:
                 delay = (2 ** (attempt + 1)) + random.uniform(0, 1)
@@ -388,6 +404,8 @@ def _call_vision_with_retry(
                 time.sleep(delay)
             else:
                 logger.error("[EXTRACTION] Vision call failed after %d attempts: %s", max_retries + 1, e)
+    if last_error is None:
+        raise RuntimeError("No attempts were made (max_retries must be >= 0)")
     raise last_error
 
 
@@ -694,53 +712,75 @@ def generate_grid(
     if not HAS_PIL:
         raise RuntimeError("Pillow is required for grid extraction. Run: pip install Pillow")
 
+    # Bug 1 fix: Cap rows at 26 — cell_id uses chr(ord("A") + r), which overflows past 'Z' for r >= 26
+    if rows > 26:
+        logger.warning("Grid rows capped from %d to 26 (cell_id limit)", rows)
+        rows = 26
+
     # Strip data URI prefix if present
     raw_b64 = image_base64
     if raw_b64.startswith("data:"):
         parts = raw_b64.split(",", 1)
         raw_b64 = parts[1] if len(parts) > 1 else raw_b64
 
+    # Bug 3 fix: Use try/finally to ensure the full image is always closed.
+    # Without this, each decoded image (up to 20-100 MB uncompressed) accumulates in memory
+    # across multi-area jobs until GC runs.
     img = _PilImage.open(io.BytesIO(base64.b64decode(raw_b64))).convert("RGB")
-    w, h = img.size
+    try:
+        w, h = img.size
 
-    # Auto-reduce grid size if cells would be too small
-    while rows > 1 and h // rows < _MIN_CELL_PX:
-        rows -= 1
-    while cols > 1 and w // cols < _MIN_CELL_PX:
-        cols -= 1
+        # Auto-reduce grid size if cells would be too small
+        while rows > 1 and h // rows < _MIN_CELL_PX:
+            rows -= 1
+        while cols > 1 and w // cols < _MIN_CELL_PX:
+            cols -= 1
 
-    cell_w = w // cols
-    cell_h = h // rows
+        # Bug 5 fix: Log warning when cols >= 10 so operators know cell IDs will use two-digit columns.
+        # The vision model prompt examples typically assume single-digit columns (A1-A9). When cols >= 10,
+        # cell IDs become "A10", "A11", etc. which the model may not handle correctly without an explicit note.
+        if cols > 9:
+            logger.warning(
+                "Grid cols=%d >= 10; cell IDs will use two-digit columns (A10, A11, ...)", cols
+            )
 
-    cells: List[GridCell] = []
-    for r in range(rows):
-        for c in range(cols):
-            x0 = c * cell_w
-            y0 = r * cell_h
-            # Last column/row captures remainder pixels to avoid off-by-one gaps
-            x1 = w if c == cols - 1 else (c + 1) * cell_w
-            y1 = h if r == rows - 1 else (r + 1) * cell_h
+        cell_w = w // cols
+        cell_h = h // rows
 
-            crop = img.crop((x0, y0, x1, y1))
-            buf = io.BytesIO()
-            crop.save(buf, format="JPEG", quality=85)
-            cell_b64 = base64.b64encode(buf.getvalue()).decode()
+        cells: List[GridCell] = []
+        for r in range(rows):
+            for c in range(cols):
+                x0 = c * cell_w
+                y0 = r * cell_h
+                # Last column/row captures remainder pixels to avoid off-by-one gaps
+                x1 = w if c == cols - 1 else (c + 1) * cell_w
+                y1 = h if r == rows - 1 else (r + 1) * cell_h
 
-            cell_id = chr(ord("A") + r) + str(c + 1)
-            bounds = {
-                "x": x0 / w,
-                "y": y0 / h,
-                "width": (x1 - x0) / w,
-                "height": (y1 - y0) / h,
-            }
-            cells.append(GridCell(
-                cell_id=cell_id,
-                image_base64=cell_b64,
-                row=r,
-                col=c,
-                bounds=bounds,
-                area_label=area_label,
-            ))
+                crop = img.crop((x0, y0, x1, y1))
+                try:
+                    buf = io.BytesIO()
+                    crop.save(buf, format="JPEG", quality=85)
+                    cell_b64 = base64.b64encode(buf.getvalue()).decode()
+                finally:
+                    crop.close()
+
+                cell_id = chr(ord("A") + r) + str(c + 1)
+                bounds = {
+                    "x": x0 / w,
+                    "y": y0 / h,
+                    "width": (x1 - x0) / w,
+                    "height": (y1 - y0) / h,
+                }
+                cells.append(GridCell(
+                    cell_id=cell_id,
+                    image_base64=cell_b64,
+                    row=r,
+                    col=c,
+                    bounds=bounds,
+                    area_label=area_label,
+                ))
+    finally:
+        img.close()
 
     logger.debug("[GRID] Generated %d cells (%dx%d) from %dx%d image for '%s'",
                  len(cells), rows, cols, w, h, area_label)
@@ -768,11 +808,23 @@ def count_fixture_type_in_cell(
     Returns:
         CellTypeCount with count, confidence, and any notes
     """
+    # Bug 5 fix: Extract the number of columns from grid_dimensions (e.g. "3x4" -> 4) so the
+    # prompt can explicitly state the cell ID format. When cols >= 10, cell IDs use two-digit
+    # column numbers (A10, A11, ...) and the model needs to know this to parse them correctly.
+    try:
+        _grid_cols = int(grid_dimensions.split("x")[1]) if "x" in grid_dimensions else 1
+    except (IndexError, ValueError):
+        _grid_cols = 1
+    _cell_id_format = (
+        f"Row letter (A-Z) + column number (1-{_grid_cols}), e.g. A1, B3, Z{_grid_cols}"
+    )
+
     system_prompt = (
         f"You are an expert electrical estimator counting fixtures in a section of a "
         f"Reflected Ceiling Plan.\n\n"
         f"FIXTURE TO COUNT: {type_tag} — {type_description}\n"
-        f"CELL POSITION: {cell.cell_id} in a {grid_dimensions} grid of area \"{cell.area_label}\"\n\n"
+        f"CELL POSITION: {cell.cell_id} in a {grid_dimensions} grid of area \"{cell.area_label}\"\n"
+        f"CELL ID FORMAT: {_cell_id_format} (row is a single letter A-Z, col is 1-{_grid_cols})\n\n"
         f"RULES:\n"
         f"1. Count ONLY fixture type {type_tag}. Ignore all other types completely.\n"
         f"2. Count a fixture if its center point or more than 50% of its symbol is within this cell image.\n"

@@ -302,5 +302,169 @@ class TestExtractRcpCountsGriddedScheduleContext(unittest.TestCase):
         self.assertTrue(len(result.warnings) > 0)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# 5. New bug-fix regression tests (Bugs 1–5)
+# ══════════════════════════════════════════════════════════════════════
+
+class TestBug1RowsCappedAt26(unittest.TestCase):
+    """Bug 1: generate_grid must cap rows at 26 to avoid cell_id overflow past 'Z'."""
+
+    @_skip_no_pil
+    def test_rows_above_26_capped(self):
+        """Requesting rows=30 must be capped to 26; cell IDs must all be valid letters A-Z."""
+        from takeoff.extraction import generate_grid
+        # Tall enough image so auto-reduction doesn't fire (30 * 50 = 1500px min)
+        b64 = _make_png_b64(300, 2000)
+        cells = generate_grid(b64, "TallArea", rows=30, cols=1)
+        row_letters = [c.cell_id[0] for c in cells]
+        for letter in row_letters:
+            self.assertTrue(
+                "A" <= letter <= "Z",
+                f"Cell ID starts with non-letter character: {letter!r}"
+            )
+        # Must have at most 26 rows
+        self.assertLessEqual(len(cells), 26)
+
+    @_skip_no_pil
+    def test_rows_exactly_26_not_capped(self):
+        """Requesting rows=26 must not be capped — 26 rows is the valid maximum."""
+        from takeoff.extraction import generate_grid
+        b64 = _make_png_b64(300, 2000)
+        cells = generate_grid(b64, "MaxRows", rows=26, cols=1)
+        # All 26 rows should be present (image is large enough)
+        row_letters = {c.cell_id[0] for c in cells}
+        self.assertIn("Z", row_letters, "Row 26 must produce a 'Z' row letter")
+
+
+class TestBug2DeterministicNoRetry(unittest.TestCase):
+    """Bug 2: Deterministic errors (JSONDecodeError, ValueError) must NOT be retried."""
+
+    def test_json_decode_error_raises_immediately_no_sleep(self):
+        """json.JSONDecodeError must propagate immediately without sleeping."""
+        import json
+        from takeoff.extraction import _call_vision_with_retry
+        err = json.JSONDecodeError("bad json", "", 0)
+        with patch("takeoff.extraction._call_vision", side_effect=err) as mock_cv, \
+             patch("takeoff.extraction.time.sleep") as mock_sleep:
+            with self.assertRaises(json.JSONDecodeError):
+                _call_vision_with_retry(MagicMock(), "sys", "user", "b64img", max_retries=2)
+        # Must have been called only once (no retries)
+        self.assertEqual(mock_cv.call_count, 1)
+        mock_sleep.assert_not_called()
+
+    def test_value_error_raises_immediately_no_sleep(self):
+        """ValueError must propagate immediately without sleeping."""
+        from takeoff.extraction import _call_vision_with_retry
+        err = ValueError("corrupt image")
+        with patch("takeoff.extraction._call_vision", side_effect=err) as mock_cv, \
+             patch("takeoff.extraction.time.sleep") as mock_sleep:
+            with self.assertRaises(ValueError):
+                _call_vision_with_retry(MagicMock(), "sys", "user", "b64img", max_retries=2)
+        self.assertEqual(mock_cv.call_count, 1)
+        mock_sleep.assert_not_called()
+
+    def test_transient_runtime_error_is_retried(self):
+        """RuntimeError (transient) must still be retried as before."""
+        from takeoff.extraction import _call_vision_with_retry
+        with patch("takeoff.extraction._call_vision",
+                   side_effect=[RuntimeError("timeout"), "ok"]) as mock_cv, \
+             patch("takeoff.extraction.time.sleep"):
+            result = _call_vision_with_retry(MagicMock(), "sys", "user", "b64img", max_retries=2)
+        self.assertEqual(result, "ok")
+        self.assertEqual(mock_cv.call_count, 2)
+
+
+class TestBug3PilImageClosed(unittest.TestCase):
+    """Bug 3: PIL images opened in generate_grid must be closed after use."""
+
+    @_skip_no_pil
+    def test_image_close_called(self):
+        """The full PIL image must be closed via try/finally in generate_grid.
+
+        The patching strategy wraps the convert() call (called on the result of open())
+        so we can intercept the final converted image and track its close() calls.
+        """
+        from PIL import Image
+        from takeoff.extraction import generate_grid
+        b64 = _make_png_b64(200, 200)
+
+        close_calls = []
+        original_open = Image.open
+
+        def patched_open(fp):
+            real_img = original_open(fp)
+            original_convert = real_img.convert
+
+            def tracking_convert(mode):
+                converted = original_convert(mode)
+                original_close = converted.close
+
+                def tracked_close():
+                    close_calls.append(True)
+                    return original_close()
+
+                converted.close = tracked_close
+                return converted
+
+            real_img.convert = tracking_convert
+            return real_img
+
+        with patch("takeoff.extraction._PilImage.open", side_effect=patched_open):
+            generate_grid(b64, "CloseTest", rows=2, cols=2)
+
+        self.assertGreater(len(close_calls), 0, "img.close() must be called at least once")
+
+
+class TestBug4NegativeMaxRetries(unittest.TestCase):
+    """Bug 4: Negative max_retries must raise ValueError immediately (not TypeError via raise None)."""
+
+    def test_negative_max_retries_raises_value_error(self):
+        """max_retries=-1 must raise ValueError before any call is made."""
+        from takeoff.extraction import _call_vision_with_retry
+        with patch("takeoff.extraction._call_vision") as mock_cv:
+            with self.assertRaises(ValueError):
+                _call_vision_with_retry(MagicMock(), "sys", "user", "b64img", max_retries=-1)
+        mock_cv.assert_not_called()
+
+    def test_zero_max_retries_makes_exactly_one_call(self):
+        """max_retries=0 must make exactly one attempt (no retries)."""
+        from takeoff.extraction import _call_vision_with_retry
+        with patch("takeoff.extraction._call_vision", return_value="result") as mock_cv:
+            result = _call_vision_with_retry(MagicMock(), "sys", "user", "b64img", max_retries=0)
+        self.assertEqual(result, "result")
+        self.assertEqual(mock_cv.call_count, 1)
+
+
+class TestBug5ColsTwoDigitWarning(unittest.TestCase):
+    """Bug 5: generate_grid must log a warning when cols >= 10 (two-digit column IDs)."""
+
+    @_skip_no_pil
+    def test_warning_logged_when_cols_ge_10(self):
+        """A warning must be emitted when the effective column count is >= 10."""
+        from takeoff.extraction import generate_grid
+        # Wide enough image to avoid auto-reduction: 10 cols * 50 px = 500px min
+        b64 = _make_png_b64(600, 100)
+        with self.assertLogs("takeoff.extraction", level="WARNING") as cm:
+            generate_grid(b64, "WideArea", rows=1, cols=10)
+        warning_text = " ".join(cm.output)
+        self.assertIn("10", warning_text, "Warning must mention the column count")
+
+    @_skip_no_pil
+    def test_no_warning_when_cols_lt_10(self):
+        """No two-digit column warning should be emitted when cols < 10."""
+        import logging
+        from takeoff.extraction import generate_grid
+        b64 = _make_png_b64(300, 100)
+        logger_obj = logging.getLogger("takeoff.extraction")
+        with patch.object(logger_obj, "warning") as mock_warn:
+            generate_grid(b64, "NormalArea", rows=1, cols=9)
+        # Check that none of the warning calls mention two-digit columns
+        two_digit_warnings = [
+            call for call in mock_warn.call_args_list
+            if "two-digit" in str(call) or "cols=" in str(call)
+        ]
+        self.assertEqual(len(two_digit_warnings), 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
