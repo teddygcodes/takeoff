@@ -309,6 +309,7 @@ class TakeoffEngine:
         # Notes and panel extraction: run in background regardless of RCP strategy.
         # _bg_ex is created inside the try/finally so it is always shut down on exception.
         # Collect notes and panel results from background executor
+        _bg_ex = None
         try:
             _notes_futures = []
             _panel_futures = []
@@ -369,7 +370,8 @@ class TakeoffEngine:
             except FuturesTimeoutError:
                 emit("WARNING: Panel extraction timed out — continuing with partial results")
         finally:
-            _bg_ex.shutdown(wait=False)
+            if _bg_ex is not None:
+                _bg_ex.shutdown(wait=False)
 
         # ─── Step 6: Run agent pipeline ───────────────────────────────────────
         if mode == "fast":

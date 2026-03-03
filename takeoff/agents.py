@@ -655,7 +655,11 @@ Return JSON ONLY — no explanatory text:
             )
         except (json.JSONDecodeError, ValueError) as e:
             logger.error("[CHECKER] ERROR: Failed to parse JSON response: %s", e)
-            fallback_data = {"attacks": vision_attacks} if vision_attacks else {"attacks": []}
+            fallback_data = {
+                "attacks": vision_attacks,
+                "total_attacks": len(vision_attacks),
+                "critical_count": sum(1 for a in vision_attacks if a.get("severity") == "critical"),
+            } if vision_attacks else {"attacks": [], "total_attacks": 0, "critical_count": 0}
             return TakeoffResponse(
                 agent_role="checker",
                 data=fallback_data,
