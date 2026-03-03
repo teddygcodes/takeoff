@@ -4016,6 +4016,176 @@ class TestRound22Regressions(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Round 25: Schema orphan + parse_error coverage
+# ══════════════════════════════════════════════════════════════════════
+
+class TestRound25Regressions(unittest.TestCase):
+    """Tests added in Round 25 audit for schema orphan INSERT and parse_error coverage."""
+
+    # ── Schema: orphaned reconciler response is persisted ────────────
+
+    def test_orphaned_reconciler_response_inserted(self):
+        """When reconciler references unknown attack_id, an orphaned record must be inserted."""
+        import tempfile
+        from takeoff.schema import TakeoffDB
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        db = TakeoffDB(db_path=db_path)
+        db.create_job("job-orphan", mode="fast")
+
+        db.store_adversarial_log(
+            job_id="job-orphan",
+            attacks=[{"attack_id": "ATK-001", "severity": "minor", "category": "missed_area",
+                      "description": "missed hall"}],
+            reconciler_responses=[
+                {"attack_id": "ATK-001", "verdict": "concede", "explanation": "correct"},
+                # orphan — no matching attack row
+                {"attack_id": "ATK-999", "verdict": "reject", "explanation": "unknown attack"},
+            ]
+        )
+
+        log = db.get_job_adversarial_log("job-orphan")
+        # ATK-001 updated normally
+        atk001 = next((r for r in log if r["attack_id"] == "ATK-001"), None)
+        self.assertIsNotNone(atk001)
+        self.assertEqual(atk001["final_verdict"], "concede")
+
+        # ATK-999 must have been inserted as orphaned record
+        orphan = next((r for r in log if r["attack_id"] == "ATK-999"), None)
+        self.assertIsNotNone(orphan, "Orphaned reconciler response must be persisted to DB")
+        self.assertEqual(orphan["final_verdict"], "reject")
+        self.assertEqual(orphan["description"], "ORPHANED_RESPONSE")
+        self.assertEqual(orphan["agent"], "reconciler")
+
+        db.close()
+
+    def test_orphaned_reconciler_response_inserted_atomic(self):
+        """store_job_results_atomic must also insert orphaned records for mismatched attack_ids."""
+        import tempfile
+        from takeoff.schema import TakeoffDB
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        db = TakeoffDB(db_path=db_path)
+        db.create_job("job-atomic-orphan", mode="strict")
+
+        db.store_job_results_atomic(
+            job_id="job-atomic-orphan",
+            fixture_counts=[],
+            attacks=[{"attack_id": "ATK-A1", "severity": "major", "category": "missed_area",
+                      "description": "test attack"}],
+            reconciler_responses=[
+                {"attack_id": "ATK-A1", "verdict": "concede", "explanation": "ok"},
+                {"attack_id": "ATK-GHOST", "verdict": "reject", "explanation": "ghost"},
+            ],
+            grand_total=10,
+            confidence_score=0.8,
+            confidence_band="HIGH",
+            confidence_features="{}",
+            violations=[],
+            flags=[],
+            judge_verdict="PASS",
+        )
+
+        log = db.get_job_adversarial_log("job-atomic-orphan")
+        ghost = next((r for r in log if r["attack_id"] == "ATK-GHOST"), None)
+        self.assertIsNotNone(ghost, "Orphaned response must be inserted in atomic path too")
+        self.assertEqual(ghost["description"], "ORPHANED_RESPONSE")
+
+        db.close()
+
+    # ── Engine: valid JSON missing fixture_counts → agent_parse_error ──
+
+    def test_counter_missing_fixture_counts_key_returns_parse_error(self):
+        """Counter that returns valid JSON without 'fixture_counts' key must yield agent_parse_error."""
+        import json
+        import tempfile
+        import base64
+        from unittest.mock import MagicMock, patch
+        from takeoff.engine import TakeoffEngine
+        from takeoff.extraction import FixtureSchedule, AreaCount
+
+        router = MagicMock()
+        router.get_stats.return_value = {"model_router_cost_usd": 0.0}
+        # Valid JSON but missing fixture_counts — simulates truncated LLM response
+        router.complete.return_value = MagicMock(content=json.dumps({
+            "grand_total_fixtures": 0,
+            "areas_covered": [],
+            "reasoning": "truncated response — fixture_counts key missing"
+        }))
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        engine = TakeoffEngine(db_path=db_path, model_router=router)
+        dummy_image = base64.b64encode(b"fake").decode()
+
+        mock_fs = FixtureSchedule()
+        mock_fs.fixtures = {"A": {"description": "Troffer"}}
+        mock_ac = AreaCount(area_label="Hall", counts_by_type={"A": 5})
+
+        with patch("takeoff.engine.extract_fixture_schedule", return_value=mock_fs), \
+             patch("takeoff.engine.extract_rcp_counts", return_value=mock_ac), \
+             patch("takeoff.engine.extract_plan_notes", return_value=[]):
+
+            snippets = [
+                {"id": "s1", "label": "fixture_schedule", "image_data": dummy_image},
+                {"id": "s2", "label": "rcp", "sub_label": "Hall", "image_data": dummy_image},
+            ]
+            result = engine.run_takeoff(snippets=snippets, mode="fast")
+
+        self.assertEqual(
+            result.get("error"), "agent_parse_error",
+            f"Missing fixture_counts key should produce agent_parse_error, got: {result.get('error')}"
+        )
+
+    def test_counter_missing_fixture_counts_key_strict_mode(self):
+        """Same fixture_counts missing case must return agent_parse_error in strict mode too."""
+        import json
+        import tempfile
+        import base64
+        from unittest.mock import MagicMock, patch
+        from takeoff.engine import TakeoffEngine
+        from takeoff.extraction import FixtureSchedule, AreaCount
+
+        router = MagicMock()
+        router.get_stats.return_value = {"model_router_cost_usd": 0.0}
+        router.complete.return_value = MagicMock(content=json.dumps({
+            "grand_total_fixtures": 0,
+            "areas_covered": [],
+            "reasoning": "truncated"
+        }))
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        engine = TakeoffEngine(db_path=db_path, model_router=router)
+        dummy_image = base64.b64encode(b"fake").decode()
+
+        mock_fs = FixtureSchedule()
+        mock_fs.fixtures = {"A": {"description": "Troffer"}}
+        mock_ac = AreaCount(area_label="Hall", counts_by_type={"A": 5})
+
+        with patch("takeoff.engine.extract_fixture_schedule", return_value=mock_fs), \
+             patch("takeoff.engine.extract_rcp_counts", return_value=mock_ac), \
+             patch("takeoff.engine.extract_plan_notes", return_value=[]):
+
+            snippets = [
+                {"id": "s1", "label": "fixture_schedule", "image_data": dummy_image},
+                {"id": "s2", "label": "rcp", "sub_label": "Hall", "image_data": dummy_image},
+            ]
+            result = engine.run_takeoff(snippets=snippets, mode="strict")
+
+        self.assertEqual(
+            result.get("error"), "agent_parse_error",
+            f"Strict mode: missing fixture_counts should produce agent_parse_error, got: {result.get('error')}"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Entry point
 # ══════════════════════════════════════════════════════════════════════
 

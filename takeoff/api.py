@@ -133,7 +133,7 @@ async def api_key_guard(request: Request, call_next):
 
 # ─── Concurrency Limiter ──────────────────────────────────────────────────────
 
-_MAX_CONCURRENT_JOBS = int(os.getenv("TAKEOFF_MAX_CONCURRENT_JOBS", "3"))
+_MAX_CONCURRENT_JOBS = int(os.getenv("TAKEOFF_MAX_CONCURRENT_JOBS", "10"))
 _job_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_JOBS)
 
 

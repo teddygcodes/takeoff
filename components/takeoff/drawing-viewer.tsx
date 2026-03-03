@@ -112,6 +112,9 @@ export function DrawingViewer({
   // renders bail out early if a new PDF is loaded while they are still in flight
   const generationRef = useRef(0);
 
+  // Zoom debounce timer ref — stored to allow clearing before setting a new timer
+  const zoomTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
   // Keep a stable ref to the current zoom for use inside async callbacks
   const zoomRef = useRef(zoom);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
@@ -209,8 +212,9 @@ export function DrawingViewer({
   // Debounced re-render on zoom change (200 ms — avoids re-rendering on every increment)
   useEffect(() => {
     if (!pdfLoaded) return;
-    const timer = setTimeout(() => renderPage(currentPage, zoom), 200);
-    return () => clearTimeout(timer);
+    clearTimeout(zoomTimerRef.current);
+    zoomTimerRef.current = setTimeout(() => renderPage(currentPage, zoom), 200);
+    return () => clearTimeout(zoomTimerRef.current);
   }, [zoom, pdfLoaded, currentPage, renderPage]);
 
   /* ── Thumbnail rendering ────────────────────────────────────── */
@@ -325,23 +329,23 @@ export function DrawingViewer({
     };
 
     // ── Pan: click-drag to scroll ──
-    let ps: { x: number; y: number; sl: number; st: number } | null = null;
+    const psRef = { current: null as { x: number; y: number; sl: number; st: number } | null };
 
     const onPanDown = (e: PointerEvent) => {
       if (snipModeRef.current || e.button !== 0) return;
       el.setPointerCapture(e.pointerId); // lock events to this element during drag
-      ps = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
+      psRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
       setIsPanning(true);
       e.preventDefault();
     };
 
     const onPanMove = (e: PointerEvent) => {
-      if (!ps) return;
-      el.scrollLeft = ps.sl - (e.clientX - ps.x);
-      el.scrollTop  = ps.st - (e.clientY - ps.y);
+      if (!psRef.current) return;
+      el.scrollLeft = psRef.current.sl - (e.clientX - psRef.current.x);
+      el.scrollTop  = psRef.current.st - (e.clientY - psRef.current.y);
     };
 
-    const onPanEnd = () => { ps = null; setIsPanning(false); };
+    const onPanEnd = () => { psRef.current = null; setIsPanning(false); };
 
     el.addEventListener("wheel",         handleWheel, { passive: false });
     el.addEventListener("pointerdown",   onPanDown);
@@ -873,6 +877,7 @@ export function DrawingViewer({
             >
               <button
                 onClick={captureAndConfirm}
+                aria-label="Confirm snippet selection"
                 className="rounded bg-accent px-2.5 py-1 text-xs font-semibold text-white shadow hover:bg-accent-hover"
               >
                 Confirm
@@ -883,6 +888,7 @@ export function DrawingViewer({
                   pendingRectRef.current = null;
                   setSnipCursor("crosshair");
                 }}
+                aria-label="Cancel snippet selection"
                 className="rounded border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground shadow"
               >
                 Cancel

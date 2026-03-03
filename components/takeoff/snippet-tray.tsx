@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import type { Snippet, ReadinessStatus } from "@/lib/types";
 
 interface SnippetTrayProps {
@@ -79,6 +79,8 @@ export function SnippetTray({
   const [editLabel, setEditLabel] = useState("");
   const [editSubLabel, setEditSubLabel] = useState("");
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const deleteTimerRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   const { ready, message, counts } = useMemo(() => getReadiness(snippets), [snippets]);
 
@@ -206,7 +208,9 @@ export function SnippetTray({
                           >
                             {editingId === snippet.id ? (
                               <div className="p-3">
+                                <label htmlFor="snippet-label-select" className="sr-only">Snippet type</label>
                                 <select
+                                  id="snippet-label-select"
                                   value={editLabel}
                                   onChange={(e) => { setEditLabel(LABEL_OPTIONS.some((o) => o.value === e.target.value) ? e.target.value : editLabel); }}
                                   className="mb-2 w-full rounded-md border border-border bg-background px-2 py-1.5 font-sans text-xs text-foreground"
@@ -217,7 +221,9 @@ export function SnippetTray({
                                     </option>
                                   ))}
                                 </select>
+                                <label htmlFor="snippet-sublabel-input" className="sr-only">Area name</label>
                                 <input
+                                  id="snippet-sublabel-input"
                                   type="text"
                                   value={editSubLabel}
                                   onChange={(e) => setEditSubLabel(e.target.value)}
@@ -280,14 +286,47 @@ export function SnippetTray({
                                   >
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
                                   </button>
+                                  {deletingId === snippet.id ? (
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-[10px] text-muted-foreground">Sure?</span>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          clearTimeout(deleteTimerRef.current);
+                                          onHighlightSnippet(null);
+                                          onDeleteSnippet(snippet.id);
+                                          setDeletingId(null);
+                                        }}
+                                        className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-white bg-accent hover:bg-accent-hover"
+                                      >
+                                        Yes
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          clearTimeout(deleteTimerRef.current);
+                                          setDeletingId(null);
+                                        }}
+                                        className="rounded px-1.5 py-0.5 text-[10px] text-muted-foreground border border-border hover:bg-muted"
+                                      >
+                                        No
+                                      </button>
+                                    </div>
+                                  ) : (
                                   <button
-                                    onClick={(e) => { e.stopPropagation(); onHighlightSnippet(null); onDeleteSnippet(snippet.id); }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      clearTimeout(deleteTimerRef.current);
+                                      setDeletingId(snippet.id);
+                                      deleteTimerRef.current = setTimeout(() => setDeletingId(null), 3000);
+                                    }}
                                     className="rounded p-1 text-xs text-muted-foreground transition-colors hover:bg-red-50 hover:text-accent"
                                     title="Delete"
                                     aria-label="Delete snippet"
                                   >
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                                   </button>
+                                  )}
                                 </div>
                               </div>
                             )}

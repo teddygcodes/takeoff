@@ -307,9 +307,20 @@ class TakeoffDB:
                 if cur.rowcount == 0:
                     logger.warning(
                         "[DB] Reconciler response for attack_id '%s' found no matching row "
-                        "in adversarial_log for job '%s' — response data not persisted",
+                        "in adversarial_log for job '%s' — inserting orphaned record",
                         attack_id, job_id
                     )
+                    try:
+                        self.conn.execute("""
+                            INSERT INTO adversarial_log
+                            (job_id, agent, attack_id, severity, category, description, resolution, final_verdict)
+                            VALUES (?, 'reconciler', ?, NULL, NULL, 'ORPHANED_RESPONSE', ?, ?)
+                        """, (job_id, attack_id, explanation, verdict))
+                    except sqlite3.Error as ins_err:
+                        logger.error(
+                            "[DB] Failed to insert orphaned reconciler response for attack_id '%s': %s",
+                            attack_id, ins_err
+                        )
 
             self.conn.commit()
 
@@ -400,17 +411,31 @@ class TakeoffDB:
                         attack.get("description")
                     ))
                 for resp in reconciler_responses:
+                    r_attack_id = resp.get("attack_id")
+                    r_explanation = resp.get("explanation")
+                    r_verdict = resp.get("verdict")
                     cur.execute("""
                         UPDATE adversarial_log
                         SET resolution = ?, final_verdict = ?
                         WHERE job_id = ? AND attack_id = ?
-                    """, (resp.get("explanation"), resp.get("verdict"), job_id, resp.get("attack_id")))
+                    """, (r_explanation, r_verdict, job_id, r_attack_id))
                     if cur.rowcount == 0:
                         logger.warning(
                             "[DB] Reconciler response for attack_id '%s' found no matching row "
-                            "in adversarial_log for job '%s' — response data not persisted",
-                            resp.get("attack_id"), job_id
+                            "in adversarial_log for job '%s' — inserting orphaned record",
+                            r_attack_id, job_id
                         )
+                        try:
+                            cur.execute("""
+                                INSERT INTO adversarial_log
+                                (job_id, agent, attack_id, severity, category, description, resolution, final_verdict)
+                                VALUES (?, 'reconciler', ?, NULL, NULL, 'ORPHANED_RESPONSE', ?, ?)
+                            """, (job_id, r_attack_id, r_explanation, r_verdict))
+                        except sqlite3.Error as ins_err:
+                            logger.error(
+                                "[DB] Failed to insert orphaned reconciler response for attack_id '%s': %s",
+                                r_attack_id, ins_err
+                            )
 
                 # Result
                 cur.execute("""

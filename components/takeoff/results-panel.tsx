@@ -39,7 +39,7 @@ function exportCSV(data: TakeoffResult) {
   a.href = url;
   a.download = `takeoff_${data.drawing_name || "results"}.csv`;
   a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 function exportJSON(data: TakeoffResult) {
@@ -49,7 +49,7 @@ function exportJSON(data: TakeoffResult) {
   a.href = url;
   a.download = `takeoff_${data.drawing_name || "results"}.json`;
   a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 function buildTableText(data: TakeoffResult): string {
@@ -164,7 +164,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 bg-background p-8">
         <div className="h-2 w-2 animate-pulse rounded-full bg-accent" />
-        <p className="font-mono text-xs tracking-wide text-muted-foreground">
+        <p className="font-mono text-xs tracking-wide text-muted-foreground max-w-xs truncate">
           {pipelineStatus || "RUNNING PIPELINE..."}
         </p>
       </div>
@@ -228,6 +228,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
         {tabs.map((tab) => (
           <button
             key={tab.key}
+            id={`tab-${tab.key}`}
             role="tab"
             aria-selected={activeTab === tab.key}
             tabIndex={activeTab === tab.key ? 0 : -1}
@@ -245,7 +246,7 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto" role="tabpanel" aria-labelledby={`tab-${activeTab}`}>
         {/* FIXTURE COUNTS */}
         {activeTab === "counts" && (
           <div>

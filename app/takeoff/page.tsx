@@ -65,7 +65,7 @@ export default function TakeoffPage() {
     if (pdfLoaded && snippets.length === 0) {
       setSnipMode(true);
     }
-  }, [pdfLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pdfLoaded, snippets.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Snippet management ──────────────────────────────────────────────
   const handleSnippetCaptured = useCallback((snippet: SnippetData) => {
