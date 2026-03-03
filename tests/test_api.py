@@ -250,6 +250,21 @@ class TestAPIKeyGuard(unittest.TestCase):
                             json={"snippets": self._valid_snippets(), "mode": "fast"})
         self.assertNotEqual(r.status_code, 403)
 
+    def test_non_ascii_api_key_returns_403_not_500(self):
+        """Test that invalid API key header (non-string) returns 403, not 500."""
+        # This tests the TypeError handler in api_key_guard
+        with patch.object(api_mod, "_TAKEOFF_API_KEY", "secret123"):
+            # Patch secrets.compare_digest in the api module where it's imported
+            with patch.object(api_mod, "secrets") as mock_secrets:
+                mock_secrets.compare_digest.side_effect = TypeError("cannot compare non-string types")
+                client = TestClient(app)
+                r = client.post("/takeoff/run",
+                                json={"snippets": self._valid_snippets(), "mode": "fast"},
+                                headers={"X-API-Key": "invalid"})
+        # Should be 403, not 500
+        self.assertEqual(r.status_code, 403)
+        self.assertIn("detail", r.json())
+
 
 # ── grid result passthrough ────────────────────────────────────────────────────
 

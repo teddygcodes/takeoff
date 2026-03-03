@@ -63,6 +63,11 @@ export function DrawingViewer({
   const [snipRect, setSnipRect] = useState<SnipRect | null>(null);
   const snipRectRef = useRef<SnipRect | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
+  const isDrawingRef = useRef(false);
+  const setIsDrawingWithRef = useCallback((val: boolean) => {
+    isDrawingRef.current = val;
+    setIsDrawing(val);
+  }, []);
   const startRef = useRef<{ x: number; y: number } | null>(null);
 
   // Pending rect: drawn but not yet confirmed; user can drag corners to resize
@@ -80,6 +85,10 @@ export function DrawingViewer({
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const thumbnailRefs = useRef<Record<number, HTMLCanvasElement | null>>({});
+
+  // Generation counter — incremented each time a new PDF is loaded; lets thumbnail
+  // renders bail out early if a new PDF is loaded while they are still in flight
+  const generationRef = useRef(0);
 
   // Keep a stable ref to the current zoom for use inside async callbacks
   const zoomRef = useRef(zoom);
@@ -99,8 +108,13 @@ export function DrawingViewer({
       pendingRectRef.current = null;
       dragHandleRef.current = -1;
       setSnipCursor("crosshair");
+      return;
     }
-  }, [snipMode]);
+    // When snip mode is active, listen for mouseup on window so that releasing
+    // the mouse button outside the canvas doesn't leave isDrawing stuck as true.
+    window.addEventListener("mouseup", onSnipMouseUp);
+    return () => window.removeEventListener("mouseup", onSnipMouseUp);
+  }, [snipMode, onSnipMouseUp]);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPendingRect(null);
@@ -159,7 +173,10 @@ export function DrawingViewer({
 
   // Cancel any in-progress render task on unmount to avoid canvas-after-unmount errors
   useEffect(() => {
-    return () => { renderTaskRef.current?.cancel(); };
+    return () => {
+      renderTaskRef.current?.cancel();
+      pdfDocRef.current?.destroy();
+    };
   }, []);
 
   // Immediate re-render on page change
@@ -180,7 +197,9 @@ export function DrawingViewer({
     if (!pdfDocRef.current) return;
     const canvas = thumbnailRefs.current[pageNum];
     if (!canvas) return;
+    const gen = generationRef.current;
     const page = await pdfDocRef.current.getPage(pageNum);
+    if (generationRef.current !== gen) return; // PDF was swapped
     const baseVp = page.getViewport({ scale: 1 });
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     // Low scale (~0.5–0.8×) × DPR for sharp thumbnails at sidebar size
@@ -193,6 +212,7 @@ export function DrawingViewer({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     await page.render({ canvasContext: ctx, viewport }).promise;
+    if (generationRef.current !== gen) return; // PDF was swapped after render
   }, []);
 
   // Render all thumbnails after PDF loads; blank any stale ones from a previously-loaded PDF
@@ -220,6 +240,8 @@ export function DrawingViewer({
     async (file: File) => {
       setPdfLoading(true);
       const buffer = await file.arrayBuffer();
+      pdfDocRef.current?.destroy();
+      generationRef.current++;
       const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
       pdfDocRef.current = doc;
       onPdfLoaded(doc.numPages);
@@ -355,10 +377,10 @@ export function DrawingViewer({
         pendingRectRef.current = null;
       }
       startRef.current = pos;
-      setIsDrawing(true);
+      setIsDrawingWithRef(true);
       setSnipRect({ x: pos.x, y: pos.y, width: 0, height: 0 });
     },
-    [getCanvasPos]
+    [getCanvasPos, setIsDrawingWithRef]
   );
 
   const HANDLE_CURSORS = ["nwse-resize", "nesw-resize", "nesw-resize", "nwse-resize"] as const;
@@ -383,7 +405,7 @@ export function DrawingViewer({
       }
 
       // Cursor hint: show resize cursor when hovering near a pending rect corner
-      if (!isDrawing && pendingRectRef.current) {
+      if (!isDrawingRef.current && pendingRectRef.current) {
         const r = pendingRectRef.current;
         const corners = [
           { x: r.x, y: r.y },
@@ -406,7 +428,7 @@ export function DrawingViewer({
       }
 
       // Normal draw
-      if (!isDrawing || !startRef.current) return;
+      if (!isDrawingRef.current || !startRef.current) return;
       const rect = {
         x: Math.min(startRef.current.x, pos.x),
         y: Math.min(startRef.current.y, pos.y),
@@ -416,7 +438,7 @@ export function DrawingViewer({
       snipRectRef.current = rect;
       setSnipRect(rect);
     },
-    [isDrawing, getCanvasPos]
+    [getCanvasPos]
   );
 
   const onSnipMouseUp = useCallback(() => {
@@ -426,7 +448,7 @@ export function DrawingViewer({
       return;
     }
     // End initial draw → go to pending state (user can resize before confirming)
-    setIsDrawing(false);
+    setIsDrawingWithRef(false);
     const rect = snipRectRef.current;
     if (rect && rect.width > 20 && rect.height > 20) {
       setPendingRect(rect);
@@ -436,7 +458,7 @@ export function DrawingViewer({
     setSnipRect(null);
     startRef.current = null;
     setSnipCursor("crosshair");
-  }, []);
+  }, [setIsDrawingWithRef]);
 
   const captureAndConfirm = useCallback(() => {
     const rect = pendingRectRef.current;
@@ -444,7 +466,7 @@ export function DrawingViewer({
     let imageData = "";
     const canvas = pdfCanvasRef.current;
     if (canvas && canvas.width > 0 && canvas.height > 0) {
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const sx = Math.round(rect.x * dpr);
       const sy = Math.round(rect.y * dpr);
       const sw = Math.max(1, Math.round(rect.width * dpr));
@@ -839,7 +861,7 @@ export function DrawingViewer({
               style={{
                 position: "absolute",
                 left: `${Math.min(pendingRect.x + pendingRect.width, (CANVAS_W * zoom) / 100 - 144)}px`,
-                top: `${pendingRect.y + pendingRect.height + 6}px`,
+                top: `${Math.min(pendingRect.y + pendingRect.height + 6, pdfPageCssHeight - 40)}px`,
                 zIndex: 20,
                 display: "flex",
                 gap: "6px",

@@ -107,6 +107,26 @@ class TestLLMProvider(unittest.TestCase):
         self.assertIn("[LLM ERROR", resp.content)
         self.assertEqual(p.client.messages.create.call_count, 3)
 
+    def test_max_retries_rate_limit_returns_valid_json_with_error_key(self):
+        """Test that max retries on rate limit returns valid JSON with error key."""
+        import json
+        p = _provider(cache=False)
+        # Raise RateLimitError on all 3 attempts (max_retries=3 means attempts 0,1,2)
+        p.client.messages.create.side_effect = [
+            anthropic.RateLimitError(
+                message="Rate limited",
+                response=MagicMock(status_code=429),
+                body=None,
+            )
+        ] * 3
+        with patch("time.sleep"):
+            resp = p.complete("sys", "user")
+        # Assert response.content is valid JSON
+        parsed = json.loads(resp.content)
+        # Assert it has error key with correct value
+        self.assertEqual(parsed["error"], "rate_limit_exceeded")
+        self.assertEqual(p.client.messages.create.call_count, 3)
+
     # ── Token + cost tracking ─────────────────────────────────────────────────
 
     def test_successful_call_tracks_cost_and_tokens(self):

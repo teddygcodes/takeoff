@@ -60,8 +60,8 @@ export function SnippingTool({
     const canvas = overlayRef.current;
     if (!canvas) return;
 
-    canvas.width = canvasWidth;
-    canvas.height = canvasHeight;
+    if (canvas.width !== canvasWidth) canvas.width = canvasWidth;
+    if (canvas.height !== canvasHeight) canvas.height = canvasHeight;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;

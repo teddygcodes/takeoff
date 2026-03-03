@@ -174,15 +174,12 @@ def calculate_confidence(
         logger.debug("[TAKEOFF CONFIDENCE] base=%.3f weighted_sum=%.3f pre_override=%.3f | %s",
                      base_confidence, weighted_sum, confidence_score, breakdown)
 
-    # Penalize if Counter's grand_total required auto-correction (math error)
-    if total_corrected:
-        confidence_score -= 0.05
-        logger.debug("[TAKEOFF CONFIDENCE] auto-correct penalty -0.05 → %.3f", confidence_score)
-
-    # Clamp to [0.0, 1.0]
+    # Clamp to [0.0, 1.0] first — must happen before penalties and overrides
+    # so that high pre-clamp values don't absorb the total_corrected penalty.
     confidence_score = max(0.0, min(1.0, confidence_score))
 
     # HARD OVERRIDE based on violation severity — caps the score regardless of features.
+    # Applied after clamping so the override always determines the ceiling.
     # Individual per-violation additive penalties were removed: they were always overwritten
     # by the caps below, making them dead code. The caps alone are the correct mechanism.
     fatal_count = sum(1 for v in constitutional_violations if v.get("severity") == "FATAL")
@@ -202,6 +199,14 @@ def calculate_confidence(
         logger.debug("[TAKEOFF CONFIDENCE] HARD OVERRIDE: %d MINOR → cap %.2f → %.3f", minor_count, minor_cap, confidence_score)
     else:
         logger.debug("[TAKEOFF CONFIDENCE] PASS — final score %.3f", confidence_score)
+
+    # Penalize if Counter's grand_total required auto-correction (math error).
+    # Applied AFTER clamping and AFTER the FATAL override so it always has effect:
+    # - Post-clamp: high scores (e.g. 1.05 clamped to 1.00) are now properly penalized to 0.95.
+    # - Post-FATAL: FATAL score of 0.25 becomes 0.20 when total_corrected is True.
+    if total_corrected:
+        confidence_score = max(0.0, confidence_score - 0.05)
+        logger.debug("[TAKEOFF CONFIDENCE] auto-correct penalty -0.05 → %.3f", confidence_score)
 
     # Determine band
     if confidence_score >= 0.85:
