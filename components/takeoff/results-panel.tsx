@@ -160,17 +160,6 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
     copyTimeoutRef.current = setTimeout(() => { setCopied(false); setCopyError(false); }, 2000);
   }, [data]);
 
-  if (data.error) {
-    return (
-      <div className="flex h-full items-center justify-center bg-background p-8">
-        <div className="text-center">
-          <p className="mb-2 font-mono text-xs font-semibold uppercase tracking-wider text-accent">Pipeline Error</p>
-          <p className="max-w-md text-sm text-muted-foreground">{data.error}</p>
-        </div>
-      </div>
-    );
-  }
-
   if (isLoading) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 bg-background p-8">
@@ -178,6 +167,17 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
         <p className="font-mono text-xs tracking-wide text-muted-foreground">
           {pipelineStatus || "RUNNING PIPELINE..."}
         </p>
+      </div>
+    );
+  }
+
+  if (data.error) {
+    return (
+      <div className="flex h-full items-center justify-center bg-background p-8">
+        <div className="text-center">
+          <p className="mb-2 font-mono text-xs font-semibold uppercase tracking-wider text-accent">Pipeline Error</p>
+          <p className="max-w-md text-sm text-muted-foreground">{data.error}</p>
+        </div>
       </div>
     );
   }
@@ -356,11 +356,15 @@ export function ResultsPanel({ data, pipelineStatus, isLoading, onClose }: Resul
                     {data.revised_total ?? data.grand_total}
                   </td>
                   <td className="px-4 py-3 text-right font-mono text-sm font-semibold">
-                    {(data.revised_total ?? data.grand_total) !== data.grand_total ? (
-                      <span className="text-amber-600">
-                        +{(data.revised_total ?? data.grand_total) - data.grand_total}
-                      </span>
-                    ) : (
+                    {(data.revised_total ?? data.grand_total) !== data.grand_total ? (() => {
+                      const diff = (data.revised_total ?? data.grand_total) - data.grand_total;
+                      const diffStr = diff > 0 ? `+${diff}` : String(diff);
+                      return (
+                        <span className={diff > 0 ? "text-amber-600" : "text-green-600"}>
+                          {diffStr}
+                        </span>
+                      );
+                    })() : (
                       <span className="text-muted-foreground">{"\u2014"}</span>
                     )}
                   </td>
@@ -626,7 +630,7 @@ ${data.fixture_counts
   )
   .join("\n")}
 ${"\u2500".repeat(68)}
-${"TOTAL".padEnd(41)}${String(data.grand_total).padStart(5)}  ${String(data.revised_total ?? data.grand_total).padStart(7)}  ${(data.revised_total ?? data.grand_total) !== data.grand_total ? "+" + ((data.revised_total ?? data.grand_total) - data.grand_total) : ""}`}
+${"TOTAL".padEnd(41)}${String(data.grand_total).padStart(5)}  ${String(data.revised_total ?? data.grand_total).padStart(7)}  ${(() => { const d = (data.revised_total ?? data.grand_total) - data.grand_total; return d !== 0 ? (d > 0 ? `+${d}` : String(d)) : ""; })()}`}
               </pre>
             </div>
           </div>

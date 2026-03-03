@@ -34,6 +34,13 @@ export default function TakeoffPage() {
   const [snipMode, setSnipMode] = useState(false);
   const [pdfLoaded, setPdfLoaded] = useState(false);
 
+  // Abort any in-flight SSE stream when the component unmounts
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   // Auto-activate snip mode once PDF loads (guides user straight into first capture)
   useEffect(() => {
     if (pdfLoaded && snippets.length === 0) {
@@ -112,43 +119,61 @@ export default function TakeoffPage() {
 
         const decoder = new TextDecoder();
         let buffer = "";
+        let gotResult = false;
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
 
-          for (const rawLine of lines) {
-            const line = rawLine.trim();
-            if (!line.startsWith("data:")) continue;
+            for (const rawLine of lines) {
+              const line = rawLine.trim();
+              if (!line.startsWith("data:")) continue;
 
-            const jsonStr = line.slice(5).trim();
-            if (!jsonStr || jsonStr === "[DONE]") continue;
+              const jsonStr = line.slice(5).trim();
+              if (!jsonStr || jsonStr === "[DONE]") continue;
 
-            try {
-              const data = JSON.parse(jsonStr);
+              try {
+                const data = JSON.parse(jsonStr);
 
-              if (data.type === "status") {
-                setPipelineStatus(data.message);
-              } else if (data.type === "result") {
-                setResults(data.data);
-                setIsRunning(false);
-                setPipelineStatus("");
-              } else if (data.type === "done") {
-                setIsRunning(false);
-                setPipelineStatus("");
-              } else if (data.type === "error") {
-                setError(data.message);
-                setIsRunning(false);
-                setPipelineStatus("");
+                if (data.type === "status") {
+                  setPipelineStatus(data.message);
+                } else if (data.type === "result") {
+                  gotResult = true;
+                  setResults(data.data);
+                  setIsRunning(false);
+                  setPipelineStatus("");
+                } else if (data.type === "done") {
+                  gotResult = true;
+                  setIsRunning(false);
+                  setPipelineStatus("");
+                } else if (data.type === "error") {
+                  gotResult = true;
+                  setError(data.message);
+                  setIsRunning(false);
+                  setPipelineStatus("");
+                }
+              } catch {
+                // Ignore unparseable SSE lines (keep-alives, partial frames)
               }
-            } catch {
-              // Ignore unparseable SSE lines (keep-alives, partial frames)
             }
           }
+
+          // Stream ended cleanly but no result event was received
+          if (!gotResult) {
+            setError("Stream ended without a result. Please try again.");
+            setIsRunning(false);
+            setPipelineStatus("");
+          }
+        } catch (readerErr) {
+          // Re-throw so outer catch handles AbortError vs real errors
+          throw readerErr;
+        } finally {
+          reader.cancel();
         }
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
