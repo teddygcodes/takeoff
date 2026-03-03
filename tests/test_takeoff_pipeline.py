@@ -598,28 +598,32 @@ class TestProgrammaticConstitutionalRules(unittest.TestCase):
         violations = check_no_double_counting([], {})
         self.assertEqual(violations, [])
 
-    def test_cross_sheet_consistency_clean(self):
-        """Same type+area appears only once → no violations."""
+    def test_cross_sheet_consistency_no_panel_data_returns_empty(self):
+        """No panel_data → no violations (wattage check requires panel schedule)."""
         violations = check_cross_sheet_consistency(VALID_FIXTURE_COUNTS_LIST)
-        self.assertEqual(violations, [], f"Expected no violations, got: {violations}")
+        self.assertEqual(violations, [], f"Expected no violations without panel data, got: {violations}")
 
-    def test_cross_sheet_conflict_detected(self):
-        """Same type+area with different counts → MAJOR violation."""
-        conflicting = [
-            {"type_tag": "A", "counts_by_area": {"Open Office North": 18}},
-            {"type_tag": "A", "counts_by_area": {"Open Office North": 20}},  # conflict!
-        ]
-        violations = check_cross_sheet_consistency(conflicting)
-        self.assertTrue(len(violations) > 0, "Expected cross-sheet conflict violation")
+    def test_cross_sheet_consistency_wattage_within_tolerance(self):
+        """Fixture wattage within 15% of panel load → no violations."""
+        counts = [{"type_tag": "A", "total": 10, "wattage": 50, "counts_by_area": {}}]
+        panel_data = {"total_watts": 500}  # fixture=500W, panel=500W → exact match
+        violations = check_cross_sheet_consistency(counts, panel_data=panel_data)
+        self.assertEqual(violations, [])
+
+    def test_cross_sheet_consistency_wattage_exceeds_tolerance(self):
+        """Fixture wattage >15% from panel load → MAJOR violation."""
+        counts = [{"type_tag": "A", "total": 10, "wattage": 50, "counts_by_area": {}}]
+        panel_data = {"total_watts": 400}  # fixture=500W, panel=400W → 25% over
+        violations = check_cross_sheet_consistency(counts, panel_data=panel_data)
+        self.assertTrue(len(violations) > 0, "Expected cross-sheet wattage violation")
         self.assertEqual(violations[0]["severity"], "MAJOR")
 
-    def test_cross_sheet_no_conflict_different_areas(self):
-        """Same type in different areas → no violation."""
-        ok = [
-            {"type_tag": "A", "counts_by_area": {"Zone 1": 10}},
-            {"type_tag": "A", "counts_by_area": {"Zone 2": 5}},  # different area, no conflict
+    def test_cross_sheet_no_panel_data_no_violation(self):
+        """Missing panel_data → returns empty list regardless of counts."""
+        counts = [
+            {"type_tag": "A", "total": 10, "wattage": 50, "counts_by_area": {}},
         ]
-        violations = check_cross_sheet_consistency(ok)
+        violations = check_cross_sheet_consistency(counts)
         self.assertEqual(violations, [])
 
     def test_cross_sheet_empty_counts(self):
@@ -1187,16 +1191,17 @@ class TestFixedGaps(unittest.TestCase):
         covered = {_normalize_area_label("North Wing Level 1")}
         self.assertFalse(_area_fuzzy_match(expected, covered))
 
-    def test_complete_coverage_fuzzy_miss_is_major_not_fatal(self):
-        """Area with fuzzy match (label rename) should produce MAJOR, not FATAL violation."""
+    def test_complete_coverage_fuzzy_miss_is_fatal(self):
+        """Area with fuzzy match (label rename) should produce FATAL violation (Rule 2 severity)."""
         from takeoff.constitution import check_complete_coverage
-        # Snippets use "Floor 1 North" but Counter covered "Level 1 North"
-        rcp_snippets = [{"label": "rcp", "sub_label": "Floor 1 North"}]
-        areas_covered = ["Level 1 North"]
+        # Snippets use "North Wing Level 1" but Counter covered "Level 1 North Wing"
+        # These fuzzy-match at >= 0.60 word overlap (3/3 shared significant words).
+        rcp_snippets = [{"label": "rcp", "sub_label": "North Wing Level 1"}]
+        areas_covered = ["Level 1 North Wing"]
         violations = check_complete_coverage(areas_covered, rcp_snippets)
         if violations:
-            self.assertEqual(violations[0]["severity"], "MAJOR",
-                             "Fuzzy-matched area rename should be MAJOR, not FATAL")
+            self.assertEqual(violations[0]["severity"], "FATAL",
+                             "Fuzzy-matched area rename should be FATAL per Rule 2 severity")
 
     def test_complete_coverage_exact_match_no_violation(self):
         """Exact area label match (after normalization) should produce no violation."""

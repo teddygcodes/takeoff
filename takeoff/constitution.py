@@ -134,7 +134,14 @@ def check_schedule_traceability(fixture_counts: list, fixture_schedule: dict) ->
 
     for count in fixture_counts:
         tag = count.get("type_tag", "").upper()
-        if tag and tag not in schedule_tags:
+        if not tag:
+            # Phantom fixture: no type tag at all — the most common LLM hallucination pattern.
+            violations.append({
+                "rule": "Schedule Traceability",
+                "severity": "FATAL",
+                "explanation": "Fixture with empty type_tag counted. No phantom fixtures allowed — every fixture must have a traceable type tag."
+            })
+        elif tag not in schedule_tags:
             violations.append({
                 "rule": "Schedule Traceability",
                 "severity": "FATAL",
@@ -181,6 +188,8 @@ def _area_fuzzy_match(expected: str, covered_set: set) -> bool:
     vs "Level 1 North Wing". Requires ≥60% non-stop word overlap AND any numeric
     tokens in the expected label must appear in the candidate (prevents "Level 1"
     from matching "Level 2"). Falls back to difflib ratio ≥0.80 for short labels.
+    The 0.60 threshold prevents false positives like "North Wing" matching "South Wing"
+    (1 shared word out of 2 = 0.50, which would be accepted at 0.50 but rejected at 0.60).
     """
     # Normalize numeric tokens to ints so "Floor 01" matches "Floor 1"
     def _norm_nums(s: str) -> frozenset:
@@ -204,11 +213,12 @@ def _area_fuzzy_match(expected: str, covered_set: set) -> bool:
         if exp_nums != cand_nums:
             continue
 
-        # Word overlap: ≥50% of significant words must be shared.
+        # Word overlap: ≥60% of significant words must be shared.
         # The numeric guard above ensures "Level 1" can't match "Level 2".
+        # Using 0.60 to prevent false matches like "North Wing" vs "South Wing" (1/2=0.50).
         if exp_words and cand_words:
             overlap = exp_words & cand_words
-            if len(overlap) / max(len(exp_words), len(cand_words)) >= 0.50:
+            if len(overlap) / max(len(exp_words), len(cand_words)) >= 0.60:
                 return True
 
         # Character-level similarity fallback for very short labels (e.g. "L1" vs "Level 1")
@@ -246,11 +256,13 @@ def check_complete_coverage(areas_covered: list, rcp_snippets: list) -> list:
             continue
         if norm_label in covered_normalized:
             continue
-        # Fuzzy match — handle area label renames (e.g. "Level 1" vs "Floor 1")
+        # Fuzzy match — handle area label renames (e.g. "Level 1" vs "Floor 1").
+        # Even though a fuzzy match was found, the area label still doesn't match exactly,
+        # which means coverage cannot be confirmed. Severity remains FATAL per Rule 2.
         if _area_fuzzy_match(norm_label, covered_normalized):
             violations.append({
                 "rule": "Complete Coverage",
-                "severity": "MAJOR",
+                "severity": "FATAL",
                 "explanation": f"RCP area '{display_label}' label differs from Counter's areas_covered (fuzzy match found). Verify the area was counted."
             })
         else:
@@ -300,32 +312,55 @@ def check_no_double_counting(fixture_counts: list, fixture_schedule: dict) -> li
     return violations
 
 
-def check_cross_sheet_consistency(fixture_counts: list) -> list:
-    """Check for the same area appearing twice with different fixture counts.
+def check_cross_sheet_consistency(fixture_counts: list, panel_data: dict = None) -> list:
+    """Check that total fixture wattage is within 15% of panel load calculations.
+
+    Rule 4 definition: "If panel schedule data is available, total fixture wattage
+    must be within 15% of panel load calculations."
+
+    This check requires panel schedule data (panel_data) to be passed in with
+    wattage totals. Without panel_data, no meaningful wattage comparison can be
+    made, so the function returns [] (no violations).
+
+    Note: Duplicate (type_tag, area) count detection was previously implemented
+    here, but that logic overlaps with Rule 3 (No Double-Counting) and is not
+    what Rule 4 specifies. It has been removed.
 
     Args:
-        fixture_counts: List of fixture count dicts with type_tag, counts_by_area
+        fixture_counts: List of fixture count dicts with type_tag, total, wattage
+        panel_data: Optional dict with panel load totals (e.g. {'total_watts': 5000}).
+                    If None or empty, the wattage check is skipped.
 
     Returns:
-        List of violations
+        List of violations (empty if no panel_data is available)
     """
-    violations = []
-    area_map: dict = {}
+    # Without panel schedule data, we cannot perform the wattage comparison.
+    # Return empty — no violation can be raised without the required input.
+    if not panel_data:
+        return []
 
+    violations = []
+
+    # Calculate total fixture wattage from fixture_counts
+    fixture_watts = 0
     for fc in fixture_counts:
-        tag = fc.get("type_tag", "")
-        counts_by_area = fc.get("counts_by_area", {})
-        for area, count in counts_by_area.items():
-            norm = _normalize_area_label(area)
-            key = (tag.upper(), norm)
-            if key in area_map and area_map[key] != count:
-                violations.append({
-                    "rule": "Cross-Sheet Consistency",
-                    "severity": "MAJOR",
-                    "explanation": f"Type {tag} in area '{area}' has conflicting counts across sheets: {area_map[key]} vs {count}"
-                })
-            else:
-                area_map[key] = count
+        watts = fc.get("wattage", 0) or 0
+        total = fc.get("total", 0) or 0
+        fixture_watts += watts * total
+
+    panel_watts = panel_data.get("total_watts", 0) or 0
+
+    if panel_watts > 0 and fixture_watts > 0:
+        ratio = fixture_watts / panel_watts
+        if abs(ratio - 1.0) > 0.15:
+            violations.append({
+                "rule": "Cross-Sheet Consistency",
+                "severity": "MAJOR",
+                "explanation": (
+                    f"Total fixture wattage ({fixture_watts}W) differs from panel load "
+                    f"({panel_watts}W) by {abs(ratio - 1.0) * 100:.1f}% — exceeds 15% tolerance."
+                )
+            })
 
     return violations
 
@@ -402,10 +437,11 @@ def check_flag_assumptions(fixture_counts: list) -> list:
 
         # Fixtures with assumption language in description/notes but no flags
         elif any(kw in combined for kw in _ASSUMPTION_KEYWORDS) and not flags:
+            excerpt = combined[:80] + ('...' if len(combined) > 80 else '')
             violations.append({
                 "rule": "Flag Assumptions",
                 "severity": "MAJOR",
-                "explanation": f"Type '{tag}': description/notes contain ambiguous language ('{combined[:80]}...') but no flags set. Assumed quantities must be explicitly flagged."
+                "explanation": f"Type '{tag}': description/notes contain ambiguous language ('{excerpt}') but no flags set. Assumed quantities must be explicitly flagged."
             })
 
     return violations
