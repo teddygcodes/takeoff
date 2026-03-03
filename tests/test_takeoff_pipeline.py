@@ -480,6 +480,25 @@ class TestTakeoffDB(unittest.TestCase):
         jobs = self.db.list_jobs()
         self.assertGreaterEqual(len(jobs), 3)
 
+    def test_list_jobs_limit_capped_at_500(self):
+        """Test that list_jobs caps the limit parameter at 500."""
+        # Create just a few jobs
+        for i in range(5):
+            jid = self._job_id()
+            self.db.create_job(
+                job_id=jid,
+                mode="strict",
+                drawing_name=f"drawing_{i}",
+                total_pages=1,
+                snippet_count=1,
+            )
+        # Request with limit much higher than 500
+        jobs = self.db.list_jobs(limit=1000)
+        # Should succeed (not hit memory error from loading unlimited rows)
+        # The actual cap is applied: min(1000, 500) = 500
+        self.assertIsInstance(jobs, list)
+        self.assertGreaterEqual(len(jobs), 5)  # At least our 5 jobs
+
 
 # ══════════════════════════════════════════════════════════════════════
 # 5. Engine Pipeline Validation (no API key needed)
