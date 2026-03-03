@@ -123,7 +123,10 @@ async def api_key_guard(request: Request, call_next):
         _normalized_path = request.url.path.rstrip("/").lower() or "/"
         if _normalized_path not in ("/takeoff/health", "/"):
             provided = request.headers.get("X-API-Key", "")
-            if not secrets.compare_digest(provided, _TAKEOFF_API_KEY):
+            try:
+                if not secrets.compare_digest(provided, _TAKEOFF_API_KEY):
+                    return JSONResponse(status_code=403, content={"detail": "Invalid or missing API key"})
+            except TypeError:
                 return JSONResponse(status_code=403, content={"detail": "Invalid or missing API key"})
     return await call_next(request)
 
@@ -183,11 +186,17 @@ async def generate_takeoff_stream(request: TakeoffRequest) -> AsyncGenerator[str
             # Put result into the queue before setting done_event so the
             # SSE generator always sees it when it drains after done.
             if not cancel_event.is_set():
-                status_queue.put({"type": "result_ready", "data": result})
+                try:
+                    status_queue.put_nowait({"type": "result_ready", "data": result})
+                except queue.Full:
+                    logger.warning("[JOB] Status queue full after timeout — result dropped")
         except Exception as e:
             logger.exception("[TAKEOFF API] Job thread raised unhandled exception")
             if not cancel_event.is_set():
-                status_queue.put({"type": "error", "message": str(e)})
+                try:
+                    status_queue.put_nowait({"type": "error", "message": str(e)})
+                except queue.Full:
+                    logger.warning("[JOB] Status queue full after timeout — error dropped")
         finally:
             done_event.set()  # always signals completion even on exception
 
@@ -377,6 +386,7 @@ async def list_jobs(limit: int = 20):
     """List recent takeoff jobs."""
     if not engine:
         raise HTTPException(status_code=503, detail="Takeoff engine not initialized")
+    limit = min(limit, 500)
     jobs = engine.db.list_jobs(limit=limit)
     return {"jobs": jobs, "count": len(jobs)}
 

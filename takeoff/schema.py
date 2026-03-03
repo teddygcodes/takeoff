@@ -263,7 +263,16 @@ class TakeoffDB:
         attacks: List[Dict],
         reconciler_responses: List[Dict]
     ) -> None:
-        """Store the full adversarial exchange log."""
+        """Store the full adversarial exchange log.
+
+        WARNING: This method is NOT fully atomic. It inserts attacks and then
+        updates with reconciler responses in separate steps with a single commit
+        at the end. A process crash between the two steps leaves partial audit
+        records (attacks with no reconciler resolution). For full atomicity use
+        store_job_results_atomic, which wraps fixture counts, adversarial log,
+        and the final result in a single transaction via the ``with conn:``
+        context manager.
+        """
         with self._lock:
             # Store attacks
             for attack in attacks:
@@ -358,9 +367,8 @@ class TakeoffDB:
         being left in a partial state if the process crashes mid-write.
         """
         with self._lock:
-            cur = self.conn.cursor()
-            try:
-                cur.execute("BEGIN")
+            with self.conn:
+                cur = self.conn.cursor()
                 # Fixture counts
                 for fc in fixture_counts:
                     for area, count in fc.get("counts_by_area", {}).items():
@@ -423,14 +431,6 @@ class TakeoffDB:
                     json.dumps(full_result, default=str) if full_result else None
                 ))
 
-                cur.execute("COMMIT")
-            except Exception:
-                try:
-                    cur.execute("ROLLBACK")
-                except Exception:
-                    logger.error("[SCHEMA] ROLLBACK failed", exc_info=True)
-                raise
-
     def get_full_result(self, job_id: str) -> Optional[Dict]:
         """Retrieve the full formatted result for a completed job."""
         with self._lock:
@@ -476,7 +476,13 @@ class TakeoffDB:
             return [dict(r) for r in rows]
 
     def list_jobs(self, limit: int = 20) -> List[Dict]:
-        """List recent takeoff jobs."""
+        """List recent takeoff jobs.
+
+        The limit parameter is capped at 500 as a safety net to prevent loading
+        the entire database into memory. The API layer applies its own cap before
+        calling this method, but this guard is retained for direct callers.
+        """
+        limit = min(limit, 500)
         with self._lock:
             rows = self.conn.execute("""
                 SELECT j.job_id, j.created_at, j.drawing_name, j.mode, j.status,

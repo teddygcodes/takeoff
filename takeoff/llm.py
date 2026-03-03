@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -73,6 +74,7 @@ class LLMProvider:
 
         # Rate limiting
         self._last_call_time = 0.0
+        self._rate_lock = threading.Lock()
         self._rate_limit_seconds = API_CONFIG.get("rate_limit_seconds", 1.0)
         self._rate_limit_enabled = API_CONFIG.get("rate_limit_enabled", True)
 
@@ -97,13 +99,18 @@ class LLMProvider:
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def _enforce_rate_limit(self):
-        """Enforce rate limiting between API calls."""
+        """Enforce rate limiting between API calls.
+
+        Acquires _rate_lock for the full read-check-sleep-update sequence so only
+        one thread can pass the rate gate at a time under concurrent load.
+        """
         if not self._rate_limit_enabled:
             return
-        elapsed = time.time() - self._last_call_time
-        if elapsed < self._rate_limit_seconds:
-            time.sleep(self._rate_limit_seconds - elapsed)
-        self._last_call_time = time.time()
+        with self._rate_lock:
+            elapsed = time.time() - self._last_call_time
+            if elapsed < self._rate_limit_seconds:
+                time.sleep(self._rate_limit_seconds - elapsed)
+            self._last_call_time = time.time()
 
     def _calculate_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
         """Calculate cost for the API call."""
@@ -136,6 +143,7 @@ class LLMProvider:
             LLMResponse with the completion
         """
         model = model or API_CONFIG.get("model", "claude-sonnet-4-6")
+        cache_key = None
 
         # Check cache
         if self.cache_enabled:
@@ -189,7 +197,7 @@ class LLMProvider:
                 self.call_count += 1
 
                 # Cache the response (store tokens/latency for informational cache hits)
-                if self.cache_enabled:
+                if self.cache_enabled and cache_key is not None:
                     self._cache[cache_key] = {
                         "content": content,
                         "input_tokens": input_tokens,
@@ -230,7 +238,7 @@ class LLMProvider:
                 )
 
         return LLMResponse(
-            content="[LLM ERROR: Max retries exceeded]",
+            content='{"error": "rate_limit_exceeded", "message": "Max retries exceeded"}',
             model=model,
             metadata={"task_type": task_type, "error": "max_retries"},
         )
