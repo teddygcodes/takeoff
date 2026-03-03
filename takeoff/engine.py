@@ -235,22 +235,12 @@ class TakeoffEngine:
         ]
 
         if not rcp_jobs:
+            self.db.update_job_status(job_id, "failed")
             return {
                 "job_id": job_id,
                 "error": "insufficient_snippets",
                 "message": "All RCP snippets have empty image data — at least 1 valid RCP image is required."
             }
-
-        # Notes and panel extraction: run in background regardless of RCP strategy
-        _notes_futures = []
-        _panel_futures = []
-        _bg_ex = ThreadPoolExecutor(max_workers=4)
-        for notes_snippet in notes_snippets:
-            if notes_snippet.get("image_data", ""):
-                _notes_futures.append(_bg_ex.submit(extract_plan_notes, notes_snippet.get("image_data", "")))
-        for panel_snippet in panel_snippets:
-            if panel_snippet.get("image_data", ""):
-                _panel_futures.append(_bg_ex.submit(extract_panel_schedule, panel_snippet.get("image_data", "")))
 
         # RCP extraction — grid mode processes areas sequentially (for progress updates),
         # each area running its own internal parallel cell×type calls.
@@ -303,60 +293,81 @@ class TakeoffEngine:
                     _rcp_ex.submit(extract_rcp_counts, img, fixture_schedule, lbl): i
                     for i, (lbl, img) in enumerate(_rcp_work)
                 }
-                for fut in as_completed(_rcp_futures, timeout=200):
-                    idx = _rcp_futures[fut]
-                    try:
-                        _rcp_results[idx] = fut.result()
-                    except Exception as _e:
-                        emit(f"WARNING: RCP extraction failed for one area: {_e}")
+                try:
+                    for fut in as_completed(_rcp_futures, timeout=200):
+                        idx = _rcp_futures[fut]
+                        try:
+                            _rcp_results[idx] = fut.result()
+                        except Exception as _e:
+                            emit(f"WARNING: RCP extraction failed for one area: {_e}")
+                except FuturesTimeoutError:
+                    emit("WARNING: RCP extraction timed out — continuing with partial results")
             area_counts = [r for r in _rcp_results if r is not None]
             for ac in area_counts:
                 emit(f"Counted fixtures in '{ac.area_label}'")
 
+        # Notes and panel extraction: run in background regardless of RCP strategy.
+        # _bg_ex is created inside the try/finally so it is always shut down on exception.
         # Collect notes and panel results from background executor
         try:
+            _notes_futures = []
+            _panel_futures = []
+            _bg_ex = ThreadPoolExecutor(max_workers=4)
+            for notes_snippet in notes_snippets:
+                if notes_snippet.get("image_data", ""):
+                    _notes_futures.append(_bg_ex.submit(extract_plan_notes, notes_snippet.get("image_data", "")))
+            for panel_snippet in panel_snippets:
+                if panel_snippet.get("image_data", ""):
+                    _panel_futures.append(_bg_ex.submit(extract_panel_schedule, panel_snippet.get("image_data", "")))
+
             plan_notes: List[PlanNote] = []
-            for fut in as_completed(_notes_futures, timeout=200):
-                try:
-                    result = fut.result()
-                    if result:
-                        plan_notes.extend(result)
-                except Exception as _e:
-                    emit(f"WARNING: Notes extraction failed: {_e}")
+            try:
+                for fut in as_completed(_notes_futures, timeout=200):
+                    try:
+                        result = fut.result()
+                        if result:
+                            plan_notes.extend(result)
+                    except Exception as _e:
+                        emit(f"WARNING: Notes extraction failed: {_e}")
+            except FuturesTimeoutError:
+                emit("WARNING: Notes extraction timed out — continuing with partial results")
 
             panel_data: Optional[PanelData] = None
-            for fut in as_completed(_panel_futures, timeout=200):
-                try:
-                    extracted = fut.result()
-                    if extracted is None:
-                        continue
-                    if panel_data is None:
-                        panel_data = extracted
-                    else:
-                        if (
-                            extracted.panel_name
-                            and panel_data.panel_name
-                            and extracted.panel_name != panel_data.panel_name
-                        ):
-                            emit(
-                                f"WARNING: Panel names differ across snippets "
-                                f"('{panel_data.panel_name}' vs '{extracted.panel_name}') — "
-                                "merging circuits; verify these are the same panel"
-                            )
-                        existing_keys = {
-                            (panel_data.panel_name, c.get("circuit"))
-                            for c in panel_data.circuits
-                        }
-                        for circuit in extracted.circuits:
-                            key = (extracted.panel_name, circuit.get("circuit"))
-                            if key not in existing_keys:
-                                panel_data.circuits.append(circuit)
-                                existing_keys.add(key)
-                        if extracted.total_load_va and panel_data.total_load_va:
-                            panel_data.total_load_va = panel_data.total_load_va + extracted.total_load_va
-                        panel_data.warnings.extend(extracted.warnings)
-                except Exception as _e:
-                    emit(f"WARNING: Panel extraction failed: {_e}")
+            try:
+                for fut in as_completed(_panel_futures, timeout=200):
+                    try:
+                        extracted = fut.result()
+                        if extracted is None:
+                            continue
+                        if panel_data is None:
+                            panel_data = extracted
+                        else:
+                            if (
+                                extracted.panel_name
+                                and panel_data.panel_name
+                                and extracted.panel_name != panel_data.panel_name
+                            ):
+                                emit(
+                                    f"WARNING: Panel names differ across snippets "
+                                    f"('{panel_data.panel_name}' vs '{extracted.panel_name}') — "
+                                    "merging circuits; verify these are the same panel"
+                                )
+                            existing_keys = {
+                                (panel_data.panel_name, c.get("circuit"))
+                                for c in panel_data.circuits
+                            }
+                            for circuit in extracted.circuits:
+                                key = (extracted.panel_name, circuit.get("circuit"))
+                                if key not in existing_keys:
+                                    panel_data.circuits.append(circuit)
+                                    existing_keys.add(key)
+                            if extracted.total_load_va and panel_data.total_load_va:
+                                panel_data.total_load_va = panel_data.total_load_va + extracted.total_load_va
+                            panel_data.warnings.extend(extracted.warnings)
+                    except Exception as _e:
+                        emit(f"WARNING: Panel extraction failed: {_e}")
+            except FuturesTimeoutError:
+                emit("WARNING: Panel extraction timed out — continuing with partial results")
         finally:
             _bg_ex.shutdown(wait=False)
 
@@ -381,7 +392,8 @@ class TakeoffEngine:
         agent_cost_usd = self.model_router.get_stats().get("model_router_cost_usd") or 0.0
         vision_cost_usd = get_vision_cost_usd()
         cost_usd = round(agent_cost_usd + vision_cost_usd, 6)
-        self.db.update_job_status(job_id, "complete", latency_ms=elapsed_ms, cost_usd=cost_usd)
+        final_status = "failed" if result.get("error") else "complete"
+        self.db.update_job_status(job_id, final_status, latency_ms=elapsed_ms, cost_usd=cost_usd)
         result["latency_ms"] = elapsed_ms
         result["cost_usd"] = cost_usd
 

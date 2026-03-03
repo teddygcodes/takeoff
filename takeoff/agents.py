@@ -643,6 +643,7 @@ Return JSON ONLY — no explanatory text:
                 logger.info("[CHECKER] Deduplicated %d duplicate attacks", len(attacks) - len(deduped))
             data["attacks"] = deduped
             data["total_attacks"] = len(deduped)
+            data["critical_count"] = sum(1 for a in deduped if a.get("severity") == "critical")
 
             critical = data.get("critical_count", 0)
             logger.info("[CHECKER] %d attacks (%d critical)", len(deduped), critical)
@@ -654,7 +655,13 @@ Return JSON ONLY — no explanatory text:
             )
         except (json.JSONDecodeError, ValueError) as e:
             logger.error("[CHECKER] ERROR: Failed to parse JSON response: %s", e)
-            return TakeoffResponse(agent_role="checker", data={"attacks": []}, raw_response=response.content, parse_error=True)
+            fallback_data = {"attacks": vision_attacks} if vision_attacks else {"attacks": []}
+            return TakeoffResponse(
+                agent_role="checker",
+                data=fallback_data,
+                raw_response=response.content,
+                parse_error=True
+            )
 
 
 # ─── Reconciler Agent ─────────────────────────────────────────────────────────
